@@ -3,19 +3,28 @@
 
 import type { ActionResult, ActionResultWithId } from "@/lib/actions/types";
 import type {
-  AllocationMode,
   Cadence,
   Config,
   ExpenseRow,
+  IncomeAllocation,
   IncomeRow,
+  InvestmentConfig,
+  InvestmentTransaction,
+  TxSide,
 } from "@/lib/types";
 import type { ExpenseFilters, IncomeFilters } from "@/lib/data";
-import { loadDb, newId, saveDb, stamp } from "./store";
+import type { SplitCell } from "@/lib/allocation-split";
+import { validateSell } from "@/lib/investments";
+import { loadDb, newId, saveDb, stamp, type MockDb } from "./store";
 
 type Dated = { date: string; created_at: string };
 
 function byDateDesc(a: Dated, b: Dated): number {
   return b.date.localeCompare(a.date) || b.created_at.localeCompare(a.created_at);
+}
+
+function byDateAsc(a: Dated, b: Dated): number {
+  return a.date.localeCompare(b.date) || a.created_at.localeCompare(b.created_at);
 }
 
 // ---------- Reads ----------
@@ -25,7 +34,6 @@ export function getConfig(): Config {
   return {
     incomeTypes: db.incomeTypes,
     budgetTypes: db.budgetTypes,
-    allocations: db.allocations,
     categories: db.categories,
     events: [...db.events].sort((a, b) => b.created_at.localeCompare(a.created_at)),
   };
@@ -59,6 +67,29 @@ export function getIncomes(filters: IncomeFilters = {}): IncomeRow[] {
     .sort(byDateDesc);
 }
 
+export function getIncomeAllocations(incomeIds: string[]): IncomeAllocation[] {
+  const db = loadDb();
+  const wanted = new Set(incomeIds);
+  return db.incomeAllocations.filter((a) => wanted.has(a.income_id));
+}
+
+/** Latest income's split per income type — prefill source for the income form. */
+export function getLatestSplitByIncomeType(): Record<string, SplitCell[]> {
+  const db = loadDb();
+  const latestByType = new Map<string, IncomeRow & { created_at: string }>();
+  for (const income of db.incomes) {
+    const current = latestByType.get(income.income_type_id);
+    if (!current || byDateDesc(income, current) < 0) latestByType.set(income.income_type_id, income);
+  }
+  const result: Record<string, SplitCell[]> = {};
+  for (const [typeId, income] of latestByType) {
+    result[typeId] = db.incomeAllocations
+      .filter((a) => a.income_id === income.id)
+      .map((a) => ({ budget_type_id: a.budget_type_id, amount: a.amount }));
+  }
+  return result;
+}
+
 export function getRecentExpenses(limit: number): ExpenseRow[] {
   return getExpenses().slice(0, limit);
 }
@@ -73,6 +104,21 @@ export function getEventTotals(): Map<string, number> {
   return totals;
 }
 
+export function getInvestmentConfig(): InvestmentConfig {
+  const db = loadDb();
+  return {
+    assetClasses: [...db.assetClasses].sort((a, b) => a.sort - b.sort),
+    targets: db.assetClassTargets,
+    items: db.investmentItems,
+  };
+}
+
+export function getInvestmentTransactions(): InvestmentTransaction[] {
+  const db = loadDb();
+  // Chronological — the math folds these in order.
+  return [...db.investmentTransactions].sort(byDateAsc);
+}
+
 // ---------- Settings writes ----------
 
 export function createIncomeType(input: { name: string; cadence: Cadence }): ActionResult {
@@ -84,7 +130,6 @@ export function createIncomeType(input: { name: string; cadence: Cadence }): Act
     id: newId(),
     name: input.name,
     cadence: input.cadence,
-    allocation_mode: "percent",
     is_active: true,
     created_at: stamp(),
   });
@@ -108,7 +153,7 @@ export function updateIncomeType(
 
 export function createBudgetType(name: string): ActionResult {
   const db = loadDb();
-  db.budgetTypes.push({ id: newId(), name, is_active: true, created_at: stamp() });
+  db.budgetTypes.push({ id: newId(), name, kind: "spending", is_active: true, created_at: stamp() });
   saveDb(db);
   return { ok: true };
 }
@@ -122,40 +167,6 @@ export function updateBudgetType(
   if (!row) return { ok: false, error: "Budget type not found." };
   if (input.name !== undefined) row.name = input.name;
   if (input.is_active !== undefined) row.is_active = input.is_active;
-  saveDb(db);
-  return { ok: true };
-}
-
-export function saveAllocationRow(input: {
-  incomeTypeId: string;
-  mode: AllocationMode;
-  cells: { budgetTypeId: string; value: number | null }[];
-}): ActionResult {
-  const db = loadDb();
-  const incomeType = db.incomeTypes.find((t) => t.id === input.incomeTypeId);
-  if (!incomeType) return { ok: false, error: "Income type not found." };
-  incomeType.allocation_mode = input.mode;
-
-  for (const cell of input.cells) {
-    const existing = db.allocations.find(
-      (a) => a.income_type_id === input.incomeTypeId && a.budget_type_id === cell.budgetTypeId
-    );
-    const percent = input.mode === "percent" ? cell.value : null;
-    const amount = input.mode === "amount" ? cell.value : null;
-    if (existing) {
-      existing.percent = percent;
-      existing.amount = amount;
-    } else {
-      db.allocations.push({
-        id: newId(),
-        income_type_id: input.incomeTypeId,
-        budget_type_id: cell.budgetTypeId,
-        percent,
-        amount,
-        created_at: stamp(),
-      });
-    }
-  }
   saveDb(db);
   return { ok: true };
 }
@@ -191,10 +202,101 @@ export function updateExpenseCategory(
   return { ok: true };
 }
 
+// ---------- Investment settings writes ----------
+
+export function createAssetClass(name: string): ActionResult {
+  const db = loadDb();
+  if (db.assetClasses.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+    return { ok: false, error: "An asset class with that name already exists." };
+  }
+  const maxSort = db.assetClasses.reduce((max, c) => Math.max(max, c.sort), -1);
+  db.assetClasses.push({
+    id: newId(),
+    name,
+    is_active: true,
+    sort: maxSort + 1,
+    created_at: stamp(),
+  });
+  saveDb(db);
+  return { ok: true };
+}
+
+export function updateAssetClass(
+  id: string,
+  input: { name?: string; is_active?: boolean; sort?: number }
+): ActionResult {
+  const db = loadDb();
+  const row = db.assetClasses.find((c) => c.id === id);
+  if (!row) return { ok: false, error: "Asset class not found." };
+  if (input.name !== undefined) row.name = input.name;
+  if (input.is_active !== undefined) row.is_active = input.is_active;
+  if (input.sort !== undefined) row.sort = input.sort;
+  saveDb(db);
+  return { ok: true };
+}
+
+export function saveClassTargets(
+  year: string,
+  cells: { assetClassId: string; percent: number }[]
+): ActionResult {
+  const db = loadDb();
+  for (const cell of cells) {
+    const existing = db.assetClassTargets.find(
+      (t) => t.asset_class_id === cell.assetClassId && t.year === year
+    );
+    if (existing) {
+      existing.percent = cell.percent;
+    } else {
+      db.assetClassTargets.push({
+        id: newId(),
+        asset_class_id: cell.assetClassId,
+        year,
+        percent: cell.percent,
+        created_at: stamp(),
+      });
+    }
+  }
+  saveDb(db);
+  return { ok: true };
+}
+
+export function createInvestmentItem(input: {
+  name: string;
+  assetClassId: string;
+}): ActionResultWithId {
+  const db = loadDb();
+  if (!db.assetClasses.some((c) => c.id === input.assetClassId)) {
+    return { ok: false, error: "Asset class not found." };
+  }
+  const id = newId();
+  db.investmentItems.push({
+    id,
+    asset_class_id: input.assetClassId,
+    name: input.name,
+    is_active: true,
+    created_at: stamp(),
+  });
+  saveDb(db);
+  return { ok: true, id };
+}
+
+export function updateInvestmentItem(
+  id: string,
+  input: { name?: string; is_active?: boolean }
+): ActionResult {
+  const db = loadDb();
+  const row = db.investmentItems.find((i) => i.id === id);
+  if (!row) return { ok: false, error: "Item not found." };
+  if (input.name !== undefined) row.name = input.name;
+  if (input.is_active !== undefined) row.is_active = input.is_active;
+  saveDb(db);
+  return { ok: true };
+}
+
 // ---------- Entry writes ----------
 
 type ExpenseInput = Omit<ExpenseRow, "id">;
-type IncomeInput = Omit<IncomeRow, "id">;
+type IncomeInput = Omit<IncomeRow, "id"> & { allocations: SplitCell[] };
 
 export function createExpense(input: ExpenseInput): ActionResult {
   const db = loadDb();
@@ -219,9 +321,26 @@ export function deleteExpense(id: string): ActionResult {
   return { ok: true };
 }
 
+function writeSplit(db: MockDb, incomeId: string, cells: SplitCell[]): void {
+  db.incomeAllocations = db.incomeAllocations.filter((a) => a.income_id !== incomeId);
+  for (const cell of cells) {
+    if (cell.amount <= 0) continue; // only non-zero cells are stored
+    db.incomeAllocations.push({
+      id: newId(),
+      income_id: incomeId,
+      budget_type_id: cell.budget_type_id,
+      amount: cell.amount,
+      created_at: stamp(),
+    });
+  }
+}
+
 export function createIncome(input: IncomeInput): ActionResult {
   const db = loadDb();
-  db.incomes.push({ id: newId(), ...input, created_at: stamp() });
+  const { allocations, ...income } = input;
+  const id = newId();
+  db.incomes.push({ id, ...income, created_at: stamp() });
+  writeSplit(db, id, allocations);
   saveDb(db);
   return { ok: true };
 }
@@ -230,7 +349,9 @@ export function updateIncome(id: string, input: IncomeInput): ActionResult {
   const db = loadDb();
   const row = db.incomes.find((i) => i.id === id);
   if (!row) return { ok: false, error: "Income not found." };
-  Object.assign(row, input);
+  const { allocations, ...income } = input;
+  Object.assign(row, income);
+  writeSplit(db, id, allocations);
   saveDb(db);
   return { ok: true };
 }
@@ -238,6 +359,7 @@ export function updateIncome(id: string, input: IncomeInput): ActionResult {
 export function deleteIncome(id: string): ActionResult {
   const db = loadDb();
   db.incomes = db.incomes.filter((i) => i.id !== id);
+  db.incomeAllocations = db.incomeAllocations.filter((a) => a.income_id !== id); // FK cascade
   saveDb(db);
   return { ok: true };
 }
@@ -272,6 +394,51 @@ export function deleteEvent(id: string): ActionResult {
     return { ok: false, error: "This event has expenses attached — remove them first." };
   }
   db.events = db.events.filter((e) => e.id !== id);
+  saveDb(db);
+  return { ok: true };
+}
+
+// ---------- Investment transaction writes ----------
+
+interface TransactionInput {
+  item_id: string;
+  side: TxSide;
+  amount: number;
+  quantity: number | null;
+  date: string;
+  notes: string | null;
+}
+
+export function createInvestmentTransaction(input: TransactionInput): ActionResult {
+  const db = loadDb();
+  if (!db.investmentItems.some((i) => i.id === input.item_id)) {
+    return { ok: false, error: "Item not found." };
+  }
+  if (input.side === "sell") {
+    const error = validateSell(getInvestmentTransactions(), input);
+    if (error) return { ok: false, error };
+  }
+  db.investmentTransactions.push({ id: newId(), ...input, created_at: stamp() });
+  saveDb(db);
+  return { ok: true };
+}
+
+export function updateInvestmentTransaction(id: string, input: TransactionInput): ActionResult {
+  const db = loadDb();
+  const row = db.investmentTransactions.find((t) => t.id === id);
+  if (!row) return { ok: false, error: "Transaction not found." };
+  if (input.side === "sell") {
+    const error = validateSell(getInvestmentTransactions(), input, id);
+    if (error) return { ok: false, error };
+  }
+  Object.assign(row, input);
+  saveDb(db);
+  return { ok: true };
+}
+
+export function deleteInvestmentTransaction(id: string): ActionResult {
+  const db = loadDb();
+  db.investmentTransactions = db.investmentTransactions.filter((t) => t.id !== id);
   saveDb(db);
   return { ok: true };
 }

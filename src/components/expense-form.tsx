@@ -29,6 +29,14 @@ interface ExpenseFormProps {
 export function ExpenseForm({ budgetTypes, categories, events, initial, onSaved, onDone }: ExpenseFormProps) {
   const isEdit = initial !== undefined;
 
+  // Investment envelopes are deployed via the investments module, never via
+  // expenses (single source of record). Keep a legacy type visible only when
+  // editing an old expense that still references it.
+  const spendingTypes = budgetTypes.filter(
+    (b) => b.kind !== "investment" || b.id === initial?.budget_type_id
+  );
+  const spendingTypeIds = new Set(spendingTypes.map((b) => b.id));
+
   const [name, setName] = useState(initial?.name ?? "");
   const [amount, setAmount] = useState<number | null>(initial?.amount ?? null);
   const [date, setDate] = useState(initial?.date ?? todayWIB());
@@ -42,7 +50,8 @@ export function ExpenseForm({ budgetTypes, categories, events, initial, onSaved,
   function handleCategoryChange(id: string) {
     setCategoryId(id);
     const category = categories.find((c) => c.id === id);
-    if (category?.default_budget_type_id) {
+    // Ignore defaults pointing at investment-kind types.
+    if (category?.default_budget_type_id && spendingTypeIds.has(category.default_budget_type_id)) {
       setBudgetTypeId(category.default_budget_type_id);
     }
   }
@@ -169,7 +178,7 @@ export function ExpenseForm({ budgetTypes, categories, events, initial, onSaved,
             id="expense-budget-type"
             value={budgetTypeId}
             onChange={setBudgetTypeId}
-            options={budgetTypes.map((b) => ({ value: b.id, label: b.name }))}
+            options={spendingTypes.map((b) => ({ value: b.id, label: b.name }))}
             placeholder="Budget"
           />
         </div>

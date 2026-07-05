@@ -1,5 +1,11 @@
+import type { SplitCell } from "@/lib/allocation-split";
 import { currentMonthWIB, monthLabel, monthRange } from "@/lib/dates";
-import { getConfig, getIncomes } from "@/lib/data";
+import {
+  getConfig,
+  getIncomeAllocations,
+  getIncomes,
+  getLatestSplitByIncomeType,
+} from "@/lib/data";
 import { formatIDR } from "@/lib/format";
 import { IncomeList } from "@/components/income-list";
 
@@ -22,7 +28,7 @@ export default async function IncomePage({
 
   const range = month !== "all" ? monthRange(month) : undefined;
 
-  const [config, incomes] = await Promise.all([
+  const [config, incomes, latestSplitByType] = await Promise.all([
     getConfig(),
     getIncomes({
       start: range?.start,
@@ -30,7 +36,17 @@ export default async function IncomePage({
       incomeTypeId: type !== "all" ? type : undefined,
       search: q || undefined,
     }),
+    getLatestSplitByIncomeType(),
   ]);
+
+  const allocations = await getIncomeAllocations(incomes.map((i) => i.id));
+  const splitByIncome: Record<string, SplitCell[]> = {};
+  for (const cell of allocations) {
+    (splitByIncome[cell.income_id] ??= []).push({
+      budget_type_id: cell.budget_type_id,
+      amount: cell.amount,
+    });
+  }
 
   const total = incomes.reduce((sum, i) => sum + i.amount, 0);
 
@@ -47,6 +63,9 @@ export default async function IncomePage({
       <IncomeList
         incomes={incomes}
         incomeTypes={config.incomeTypes}
+        budgetTypes={config.budgetTypes}
+        splitByIncome={splitByIncome}
+        latestSplitByType={latestSplitByType}
         month={month}
         type={type}
         q={q}

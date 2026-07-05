@@ -1,0 +1,271 @@
+import { currentYearWIB, formatDate, yearRange } from "@/lib/dates";
+import {
+  getConfig,
+  getIncomeAllocations,
+  getIncomes,
+  getInvestmentConfig,
+  getInvestmentTransactions,
+} from "@/lib/data";
+import { formatIDR } from "@/lib/format";
+import {
+  computeInvestmentSummary,
+  computeItemPositions,
+  type InvestmentSummary,
+} from "@/lib/investments";
+import type { AssetClassTarget, BudgetType, IncomeAllocation, IncomeRow } from "@/lib/types";
+import { ClassCard } from "@/components/investments/class-card";
+import { ItemSection, type ClassGroup } from "@/components/investments/item-section";
+import {
+  InvestmentsPeriodPicker,
+  type InvestmentsView,
+} from "@/components/investments/period-picker";
+import { TransactionDialog } from "@/components/investments/transaction-dialog";
+import { Badge } from "@/components/ui/badge";
+
+interface SearchParams {
+  view?: string;
+  year?: string;
+}
+
+/** Income allocated to investment-kind envelopes = the investment budget. */
+function investBudgetOf(
+  incomes: IncomeRow[],
+  allocations: IncomeAllocation[],
+  budgetTypes: BudgetType[]
+): number {
+  const investTypeIds = new Set(budgetTypes.filter((b) => b.kind === "investment").map((b) => b.id));
+  const incomeIds = new Set(incomes.map((i) => i.id));
+  return allocations
+    .filter((a) => incomeIds.has(a.income_id) && investTypeIds.has(a.budget_type_id))
+    .reduce((sum, a) => sum + a.amount, 0);
+}
+
+function targetsFor(targets: AssetClassTarget[], year: string) {
+  return targets.filter((t) => t.year === year);
+}
+
+export default async function InvestmentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}) {
+  const params = await searchParams;
+  const view: InvestmentsView = params.view === "alltime" ? "alltime" : "yearly";
+  const currentYear = currentYearWIB();
+  const year = view === "yearly" ? (params.year ?? currentYear) : currentYear;
+  const range = yearRange(year);
+  const currentRange = yearRange(currentYear);
+
+  const [config, investmentConfig, transactions, yearIncomes] = await Promise.all([
+    getConfig(),
+    getInvestmentConfig(),
+    getInvestmentTransactions(),
+    getIncomes({ start: range.start, end: range.end }),
+  ]);
+  const yearAllocations = await getIncomeAllocations(yearIncomes.map((i) => i.id));
+  const investBudget = investBudgetOf(yearIncomes, yearAllocations, config.budgetTypes);
+
+  // Selected-view summary drives the cards (realized/deployed are windowed;
+  // holdings are always current all-time state).
+  const summary: InvestmentSummary = computeInvestmentSummary({
+    assetClasses: investmentConfig.assetClasses,
+    targets: targetsFor(investmentConfig.targets, year),
+    items: investmentConfig.items,
+    transactions,
+    investBudget,
+    window: view === "yearly" ? range : undefined,
+  });
+
+  // Budget state of the CURRENT budget year — powers the transaction form's
+  // remaining-budget warning and the net-worth headline (undeployed budget).
+  let budgetSummary = summary;
+  if (view === "alltime" || year !== currentYear) {
+    const currentIncomes = await getIncomes({ start: currentRange.start, end: currentRange.end });
+    const currentAllocations = await getIncomeAllocations(currentIncomes.map((i) => i.id));
+    budgetSummary = computeInvestmentSummary({
+      assetClasses: investmentConfig.assetClasses,
+      targets: targetsFor(investmentConfig.targets, currentYear),
+      items: investmentConfig.items,
+      transactions,
+      investBudget: investBudgetOf(currentIncomes, currentAllocations, config.budgetTypes),
+      window: currentRange,
+    });
+  }
+  const remainingByClass = Object.fromEntries(
+    budgetSummary.classes.map((c) => [c.asset_class_id, c.remaining])
+  );
+
+  // Per-item holdings + windowed realized for the drill-down.
+  const { positions, realizedEvents } = computeItemPositions(transactions);
+  const windowedByItem = new Map<string, { realized: number; basisSold: number }>();
+  for (const event of realizedEvents) {
+    if (view === "yearly" && (event.date < range.start || event.date > range.end)) continue;
+    const acc = windowedByItem.get(event.item_id) ?? { realized: 0, basisSold: 0 };
+    acc.realized += event.realized;
+    acc.basisSold += event.basisSold;
+    windowedByItem.set(event.item_id, acc);
+  }
+
+  const txsByItem = new Map<string, typeof transactions>();
+  for (const tx of transactions) {
+    const list = txsByItem.get(tx.item_id);
+    if (list) list.push(tx);
+    else txsByItem.set(tx.item_id, [tx]);
+  }
+
+  const groups: ClassGroup[] = investmentConfig.assetClasses
+    .filter((c) => c.is_active)
+    .sort((a, b) => a.sort - b.sort)
+    .map((assetClass) => ({
+      assetClass,
+      items: investmentConfig.items
+        .filter((item) => item.asset_class_id === assetClass.id && txsByItem.has(item.id))
+        .map((item) => {
+          const pos = positions.get(item.id);
+          const windowed = windowedByItem.get(item.id);
+          return {
+            item,
+            units: pos?.units ?? null,
+            costBasis: pos?.costBasis ?? 0,
+            realized: windowed?.realized ?? 0,
+            realizedPct:
+              windowed && windowed.basisSold > 0 ? windowed.realized / windowed.basisSold : null,
+            transactions: [...(txsByItem.get(item.id) ?? [])].reverse(), // newest first
+          };
+        })
+        .sort((a, b) => b.costBasis - a.costBasis),
+    }))
+    .filter((group) => group.items.length > 0);
+
+  const dataWarnings = [...positions.values()].flatMap((p) => p.warnings);
+  const showBudget = view === "yearly";
+  const realized = summary.totals.realized;
+
+  return (
+    <div className="space-y-[18px] pb-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-[28px] font-bold tracking-[-0.02em]">Investments</h1>
+          <p className="mt-1 text-[12.5px] text-muted-foreground">
+            {view === "yearly"
+              ? `${formatDate(range.start)} – ${formatDate(range.end)} · budget year ${year}`
+              : "Everything ever recorded"}
+          </p>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <InvestmentsPeriodPicker view={view} year={year} />
+          <TransactionDialog
+            assetClasses={investmentConfig.assetClasses}
+            items={investmentConfig.items}
+            remainingByClass={remainingByClass}
+          />
+        </div>
+      </div>
+
+      {dataWarnings.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {dataWarnings.map((warning, i) => (
+            <Badge key={i} variant="warning">
+              ⚠ {warning}
+            </Badge>
+          ))}
+        </div>
+      )}
+
+      {/* Stat row */}
+      <div className="grid grid-cols-2 gap-3.5 md:grid-cols-4">
+        <div className="rounded-[16px] bg-primary px-[18px] py-4 text-primary-foreground md:px-[22px] md:py-5">
+          <div className="text-[12px] font-medium text-on-ink">Net worth</div>
+          <div className="mt-1.5 text-[19px] font-bold tracking-[-0.01em] tabular-nums md:text-[24px]">
+            {formatIDR(budgetSummary.totals.netWorth)}
+          </div>
+          <div className="mt-1 text-[11px] text-on-ink">holdings + undeployed budget</div>
+        </div>
+        <Stat label="Holdings at cost" value={formatIDR(summary.totals.holdingsCost)} />
+        <Stat
+          label={view === "yearly" ? `Realized P&L · ${year}` : "Realized P&L · all time"}
+          value={`${realized < 0 ? "−" : realized > 0 ? "+" : ""}${formatIDR(Math.abs(realized))}`}
+          tone={realized < 0 ? "loss" : realized > 0 ? "profit" : undefined}
+        />
+        {showBudget ? (
+          <Stat
+            label={`Deployed · budget ${year}`}
+            value={`${formatIDR(Math.max(summary.totals.deployed, 0))} / ${formatIDR(summary.totals.budget)}`}
+          />
+        ) : (
+          <Stat
+            label={`Budget left · ${currentYear}`}
+            value={formatIDR(Math.max(budgetSummary.totals.budget - budgetSummary.totals.deployed, 0))}
+          />
+        )}
+      </div>
+
+      {/* Class cards */}
+      <div>
+        <div className="flex items-baseline justify-between">
+          <span className="text-[16px] font-bold">Asset classes</span>
+          <span className="text-[12.5px] text-muted-foreground">
+            {showBudget
+              ? `Invest envelope ${year}: ${formatIDR(investBudget)} × target %`
+              : "Holdings & realized, all time"}
+          </span>
+        </div>
+        <div className="mt-3.5 grid grid-cols-2 gap-3.5 md:grid-cols-4">
+          {summary.classes.map((row) => (
+            <ClassCard key={row.asset_class_id} row={row} showBudget={showBudget} />
+          ))}
+        </div>
+      </div>
+
+      {/* Holdings drill-down */}
+      <div>
+        <div className="text-[16px] font-bold">Holdings & performance</div>
+        <div className="mt-3.5">
+          {groups.length === 0 ? (
+            <div className="rounded-[14px] border border-dashed border-input bg-card px-6 py-8 text-center">
+              <div className="text-[13.5px] font-semibold">No transactions yet</div>
+              <div className="mt-1 text-[12.5px] text-muted-foreground">
+                Record your first buy to start tracking performance.
+              </div>
+            </div>
+          ) : (
+            <ItemSection
+              groups={groups}
+              assetClasses={investmentConfig.assetClasses}
+              allItems={investmentConfig.items}
+              remainingByClass={remainingByClass}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "profit" | "loss";
+}) {
+  return (
+    <div className="rounded-[16px] bg-card px-[18px] py-4 shadow-[0_1px_2px_rgba(38,35,30,0.05)] md:px-[22px] md:py-5">
+      <div className="text-[12px] font-medium text-muted-foreground">{label}</div>
+      <div
+        className="mt-1.5 text-[17px] font-bold tracking-[-0.01em] tabular-nums md:text-[20px]"
+        style={
+          tone === "loss"
+            ? { color: "oklch(0.52 0.16 25)" }
+            : tone === "profit"
+              ? { color: "oklch(0.5 0.12 155)" }
+              : undefined
+        }
+      >
+        {value}
+      </div>
+    </div>
+  );
+}

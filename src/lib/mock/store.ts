@@ -5,15 +5,19 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { shiftMonth, todayWIB } from "@/lib/dates";
+import { currentYearWIB, shiftMonth, todayWIB } from "@/lib/dates";
 import type {
-  BudgetAllocation,
+  AssetClass,
+  AssetClassTarget,
   BudgetType,
   EventRow,
   ExpenseCategory,
   ExpenseRow,
+  IncomeAllocation,
   IncomeRow,
   IncomeType,
+  InvestmentItem,
+  InvestmentTransaction,
 } from "@/lib/types";
 
 interface Stamped {
@@ -23,23 +27,29 @@ interface Stamped {
 export interface MockDb {
   incomeTypes: (IncomeType & Stamped)[];
   budgetTypes: (BudgetType & Stamped)[];
-  allocations: (BudgetAllocation & Stamped)[];
   categories: (ExpenseCategory & Stamped)[];
   events: (EventRow & Stamped)[];
   incomes: (IncomeRow & Stamped)[];
+  incomeAllocations: (IncomeAllocation & Stamped)[];
   expenses: (ExpenseRow & Stamped)[];
+  assetClasses: (AssetClass & Stamped)[];
+  assetClassTargets: (AssetClassTarget & Stamped)[];
+  investmentItems: (InvestmentItem & Stamped)[];
+  investmentTransactions: (InvestmentTransaction & Stamped)[];
 }
 
 const DB_DIR = path.join(process.cwd(), ".mock");
 const DB_PATH = path.join(DB_DIR, "db.json");
 
 export function loadDb(): MockDb {
-  if (!fs.existsSync(DB_PATH)) {
-    const db = seed();
-    saveDb(db);
-    return db;
+  if (fs.existsSync(DB_PATH)) {
+    const db = JSON.parse(fs.readFileSync(DB_PATH, "utf8")) as MockDb;
+    // Pre-v2 file (allocation matrix era) — reseed rather than crash.
+    if (Array.isArray(db.incomeAllocations)) return db;
   }
-  return JSON.parse(fs.readFileSync(DB_PATH, "utf8")) as MockDb;
+  const db = seed();
+  saveDb(db);
+  return db;
 }
 
 export function saveDb(db: MockDb): void {
@@ -63,69 +73,32 @@ function seed(): MockDb {
   const budgetTypes = ["Invest", "Cash", "Life", "Fun", "Giving"].map((name) => ({
     id: newId(),
     name,
+    kind: (name === "Invest" ? "investment" : "spending") as BudgetType["kind"],
     is_active: true,
     created_at: next(),
   }));
   const budget = Object.fromEntries(budgetTypes.map((b) => [b.name, b.id]));
 
-  const incomeTypeDefs: [string, "monthly" | "yearly", "percent" | "amount"][] = [
-    ["Salary", "monthly", "amount"],
-    ["Yield", "yearly", "percent"],
-    ["Bonus", "yearly", "percent"],
-    ["Angpao", "yearly", "percent"],
-    ["THR", "yearly", "percent"],
-    ["TCG Yield", "yearly", "percent"],
-    ["Others", "yearly", "percent"],
+  const incomeTypeDefs: [string, "monthly" | "yearly"][] = [
+    ["Salary", "monthly"],
+    ["Yield", "yearly"],
+    ["Bonus", "yearly"],
+    ["Angpao", "yearly"],
+    ["THR", "yearly"],
+    ["TCG Yield", "yearly"],
+    ["Others", "yearly"],
   ];
-  const incomeTypes = incomeTypeDefs.map(([name, cadence, allocation_mode]) => ({
+  const incomeTypes = incomeTypeDefs.map(([name, cadence]) => ({
     id: newId(),
     name,
     cadence,
-    allocation_mode,
     is_active: true,
     created_at: next(),
   }));
   const incomeType = Object.fromEntries(incomeTypes.map((t) => [t.name, t.id]));
 
-  const allocations: MockDb["allocations"] = [];
-  const addAllocation = (
-    incomeTypeId: string,
-    budgetTypeId: string,
-    percent: number | null,
-    amount: number | null
-  ) =>
-    allocations.push({
-      id: newId(),
-      income_type_id: incomeTypeId,
-      budget_type_id: budgetTypeId,
-      percent,
-      amount,
-      created_at: next(),
-    });
-
-  // Salary — amount mode on a 10jt base
-  addAllocation(incomeType.Salary, budget.Invest, null, 2_000_000);
-  addAllocation(incomeType.Salary, budget.Cash, null, 1_000_000);
-  addAllocation(incomeType.Salary, budget.Life, null, 5_000_000);
-  addAllocation(incomeType.Salary, budget.Fun, null, 1_500_000);
-  addAllocation(incomeType.Salary, budget.Giving, null, 500_000);
-
-  // THR — percent mode 20/0/50/30/0
-  addAllocation(incomeType.THR, budget.Invest, 20, null);
-  addAllocation(incomeType.THR, budget.Cash, 0, null);
-  addAllocation(incomeType.THR, budget.Life, 50, null);
-  addAllocation(incomeType.THR, budget.Fun, 30, null);
-  addAllocation(incomeType.THR, budget.Giving, 0, null);
-
-  // Everything else — Salary's derived split 20/10/50/15/5
-  for (const name of ["Yield", "Bonus", "Angpao", "TCG Yield", "Others"]) {
-    addAllocation(incomeType[name], budget.Invest, 20, null);
-    addAllocation(incomeType[name], budget.Cash, 10, null);
-    addAllocation(incomeType[name], budget.Life, 50, null);
-    addAllocation(incomeType[name], budget.Fun, 15, null);
-    addAllocation(incomeType[name], budget.Giving, 5, null);
-  }
-
+  // No "Invest" category: investment-kind envelopes are deployed via the
+  // investments module, never via expenses.
   const categoryDefs: [string, string][] = [
     ["Food", "Life"],
     ["Daily", "Life"],
@@ -135,7 +108,6 @@ function seed(): MockDb {
     ["Give", "Giving"],
     ["Cigarettes", "Life"],
     ["Kolekte", "Giving"],
-    ["Invest", "Invest"],
     ["Kado", "Life"],
     ["Cash", "Cash"],
   ];
@@ -147,6 +119,54 @@ function seed(): MockDb {
     created_at: next(),
   }));
   const category = Object.fromEntries(categories.map((c) => [c.name, c.id]));
+
+  // ---- Investments reference data ----
+  const classDefs: [string, number][] = [
+    ["Commodities", 5],
+    ["Stocks", 45],
+    ["Fixed", 25],
+    ["Crypto", 5],
+    ["Others", 12.5],
+    ["Business", 5],
+    ["Buffer", 2.5],
+  ];
+  const assetClasses = classDefs.map(([name], index) => ({
+    id: newId(),
+    name,
+    is_active: true,
+    sort: index,
+    created_at: next(),
+  }));
+  const assetClass = Object.fromEntries(assetClasses.map((c) => [c.name, c.id]));
+
+  const budgetYear = currentYearWIB();
+  const assetClassTargets = classDefs.map(([name, percent]) => ({
+    id: newId(),
+    asset_class_id: assetClass[name],
+    year: budgetYear,
+    percent,
+    created_at: next(),
+  }));
+
+  const itemDefs: [string, string][] = [
+    ["BBCA", "Stocks"],
+    ["CDIA", "Stocks"],
+    ["BMRI", "Stocks"],
+    ["AAPL", "Stocks"],
+    ["BTC", "Crypto"],
+    ["ETH", "Crypto"],
+    ["SOL", "Crypto"],
+    ["Deposito Superbank", "Fixed"],
+    ["Pasar Uang BRI", "Fixed"],
+  ];
+  const investmentItems = itemDefs.map(([name, className]) => ({
+    id: newId(),
+    asset_class_id: assetClass[className],
+    name,
+    is_active: true,
+    created_at: next(),
+  }));
+  const item = Object.fromEntries(investmentItems.map((i) => [i.name, i.id]));
 
   // ---- Demo entries (delete freely in the UI) ----
   const today = todayWIB();
@@ -195,10 +215,46 @@ function seed(): MockDb {
       created_at: next(),
     },
   ];
+  const [salaryIncome, thrIncome, dividendIncome] = incomes;
+
+  // Every income carries its own exact-sum envelope split (zero cells omitted).
+  const incomeAllocations: MockDb["incomeAllocations"] = [];
+  const addSplit = (incomeId: string, cells: [string, number][]) => {
+    for (const [budgetName, amount] of cells) {
+      incomeAllocations.push({
+        id: newId(),
+        income_id: incomeId,
+        budget_type_id: budget[budgetName],
+        amount,
+        created_at: next(),
+      });
+    }
+  };
+  // Salary 10.5jt @ 20/10/50/15/5
+  addSplit(salaryIncome.id, [
+    ["Invest", 2_100_000],
+    ["Cash", 1_050_000],
+    ["Life", 5_250_000],
+    ["Fun", 1_575_000],
+    ["Giving", 525_000],
+  ]);
+  // THR 5jt @ 20/0/50/30/0
+  addSplit(thrIncome.id, [
+    ["Invest", 1_000_000],
+    ["Life", 2_500_000],
+    ["Fun", 1_500_000],
+  ]);
+  // Dividend 1.2jt @ 20/10/50/15/5
+  addSplit(dividendIncome.id, [
+    ["Invest", 240_000],
+    ["Cash", 120_000],
+    ["Life", 600_000],
+    ["Fun", 180_000],
+    ["Giving", 60_000],
+  ]);
 
   const expenseDefs: [string, number, string, string, string, string | null][] = [
     // name, amount, date, category, budget type, event
-    ["Transfer to RDN", 2_000_000, `${month}-01`, "Invest", "Invest", null],
     ["Kolekte", 100_000, `${month}-01`, "Kolekte", "Giving", null],
     ["Groceries", 350_000, `${month}-02`, "Daily", "Life", null],
     ["Grab to office", 32_000, `${month}-03`, "Transport", "Life", null],
@@ -221,13 +277,39 @@ function seed(): MockDb {
     })
   );
 
+  // Demo transactions: a BBCA round trip (avg cost 9.5k/share; sell 200 for
+  // 2.08jt → +180k realized) plus open positions with and without quantity.
+  const txDefs: [string, "buy" | "sell", number, number | null, string][] = [
+    ["BBCA", "buy", 2_700_000, 300, `${prevMonth}-26`],
+    ["BBCA", "buy", 2_050_000, 200, `${month}-02`],
+    ["BBCA", "sell", 2_080_000, 200, today],
+    ["Deposito Superbank", "buy", 3_000_000, null, `${prevMonth}-28`],
+    ["BTC", "buy", 1_000_000, 0.0005, `${month}-03`],
+  ];
+  const investmentTransactions: MockDb["investmentTransactions"] = txDefs.map(
+    ([itemName, side, amount, quantity, date]) => ({
+      id: newId(),
+      item_id: item[itemName],
+      side,
+      amount,
+      quantity,
+      date,
+      notes: null,
+      created_at: next(),
+    })
+  );
+
   return {
     incomeTypes,
     budgetTypes,
-    allocations,
     categories,
     events: [baliTrip],
     incomes,
+    incomeAllocations,
     expenses,
+    assetClasses,
+    assetClassTargets,
+    investmentItems,
+    investmentTransactions,
   };
 }

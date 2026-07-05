@@ -3,15 +3,22 @@ import { envelopeHue } from "@/lib/envelope-colors";
 import type { BudgetPerformanceRow } from "@/lib/summary";
 
 function barPct(row: BudgetPerformanceRow): number {
-  if (row.allocated > 0) return Math.min(100, (row.spent / row.allocated) * 100);
+  // spent can go negative for investment envelopes (net sells) — clamp to 0.
+  if (row.allocated > 0) return Math.max(0, Math.min(100, (row.spent / row.allocated) * 100));
   return row.spent > 0 ? 100 : 0;
+}
+
+interface EnvelopeProps {
+  row: BudgetPerformanceRow;
+  /** "deployed" for investment envelopes (net buys), default expense wording. */
+  verb?: "deployed";
 }
 
 /**
  * Desktop envelope: a tinted card. Overspent → OVER badge + "Rp X over"
  * (amount stays ink, never a minus sign) and a full bar. No outline/border.
  */
-export function EnvelopeCard({ row }: { row: BudgetPerformanceRow }) {
+export function EnvelopeCard({ row, verb }: EnvelopeProps) {
   const hue = envelopeHue(row.name);
   const over = row.remaining < 0;
   const pct = barPct(row);
@@ -44,14 +51,15 @@ export function EnvelopeCard({ row }: { row: BudgetPerformanceRow }) {
         />
       </div>
       <div className="mt-2 text-[11px] tabular-nums" style={{ color: hue.text }}>
-        {formatNumber(row.spent)} / {formatNumber(row.allocated)}
+        {formatNumber(Math.max(row.spent, 0))} / {formatNumber(row.allocated)}
+        {verb && ` ${verb}`}
       </div>
     </div>
   );
 }
 
 /** Mobile envelope: a full-width tinted row (name · bar · amount). */
-export function EnvelopeRow({ row }: { row: BudgetPerformanceRow }) {
+export function EnvelopeRow({ row }: EnvelopeProps) {
   const hue = envelopeHue(row.name);
   const over = row.remaining < 0;
   const pct = barPct(row);

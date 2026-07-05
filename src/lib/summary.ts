@@ -1,22 +1,15 @@
 // All summary math lives here. Pure functions, no I/O — unit tested in summary.test.ts.
 //
-// Core rule: allocation is ALWAYS derived-% × actual income received.
-// Amounts in `amount` mode are only a convenient way to define percentages.
+// v2: every income carries its own stored envelope split (income_allocations),
+// so allocated amounts are exact sums of stored cells — no derivation, no
+// rounding, no "unconfigured split" case.
 
-import type { AllocationMode, Cadence } from "./types";
-
-export interface AllocationCellInput {
-  income_type_id: string;
-  budget_type_id: string;
-  percent: number | null;
-  amount: number | null;
-}
+import type { Cadence } from "./types";
 
 export interface IncomeTypeInput {
   id: string;
   name: string;
   cadence: Cadence;
-  allocation_mode: AllocationMode;
 }
 
 export interface BudgetTypeInput {
@@ -25,7 +18,14 @@ export interface BudgetTypeInput {
 }
 
 export interface IncomeInput {
+  id: string;
   income_type_id: string;
+  amount: number;
+}
+
+export interface IncomeAllocationInput {
+  income_id: string;
+  budget_type_id: string;
   amount: number;
 }
 
@@ -33,38 +33,6 @@ export interface ExpenseInput {
   budget_type_id: string;
   expense_category_id?: string | null;
   amount: number;
-}
-
-/**
- * Derived percentages for one income type's allocation row, as fractions
- * (0..1) keyed by budget_type_id.
- *
- * - percent mode: percent ÷ 100 per cell. May not sum to 1 (UI warns, math
- *   applies them as-is).
- * - amount mode: amount ÷ sum of amounts — sums to 1 by construction.
- *
- * Returns null when the row defines no usable allocation (no cells, all
- * values null, or amount mode summing to 0) — callers treat that income
- * type as "no budget split configured".
- */
-export function deriveRowPercents(
-  mode: AllocationMode,
-  cells: AllocationCellInput[]
-): Map<string, number> | null {
-  if (mode === "amount") {
-    const filled = cells.filter((c) => c.amount != null);
-    const total = filled.reduce((sum, c) => sum + (c.amount ?? 0), 0);
-    if (total <= 0) return null;
-    return new Map(filled.map((c) => [c.budget_type_id, (c.amount ?? 0) / total]));
-  }
-  const filled = cells.filter((c) => c.percent != null);
-  if (filled.length === 0) return null;
-  return new Map(filled.map((c) => [c.budget_type_id, (c.percent ?? 0) / 100]));
-}
-
-/** Sum of percent-mode cells in percent units (for the "≠ 100" warning). */
-export function percentRowSum(cells: AllocationCellInput[]): number {
-  return cells.reduce((sum, c) => sum + (c.percent ?? 0), 0);
 }
 
 export interface BudgetPerformanceRow {
@@ -77,61 +45,46 @@ export interface BudgetPerformanceRow {
 
 export interface BudgetPerformanceResult {
   rows: BudgetPerformanceRow[];
-  /** Names of income types that received income in the window but have no usable allocation row. */
-  unallocatedIncomeTypeNames: string[];
   /** Total income from monthly-cadence types in the window (0 ⇒ "no salary this month" note). */
   monthlyCadenceIncomeTotal: number;
 }
 
 /**
  * Budget performance for a window whose incomes/expenses are pre-filtered.
+ * Allocated per budget type = sum of the stored splits of the counted incomes.
  *
- * - window "monthly": allocated = monthly-cadence income that month × those
- *   types' derived %s. Yearly-cadence income received in the month does NOT
- *   inflate the month's budget.
- * - window "yearly": allocated = ALL income received that year × each income
- *   type's derived %s, summed per budget type.
+ * - window "monthly": only splits of monthly-cadence incomes count.
+ *   Yearly-cadence income received in the month does NOT inflate the budget.
+ * - window "yearly": splits of ALL incomes in the window count.
+ *
+ * `incomeAllocations` may be a superset — only rows whose income is in
+ * `incomes` (and passes the cadence filter) are used.
  */
 export function computeBudgetPerformance(params: {
   window: "monthly" | "yearly";
   incomeTypes: IncomeTypeInput[];
   budgetTypes: BudgetTypeInput[];
-  allocations: AllocationCellInput[];
   incomes: IncomeInput[];
+  incomeAllocations: IncomeAllocationInput[];
   expenses: ExpenseInput[];
 }): BudgetPerformanceResult {
-  const { window, incomeTypes, budgetTypes, allocations, incomes, expenses } = params;
+  const { window, incomeTypes, budgetTypes, incomes, incomeAllocations, expenses } = params;
 
-  const incomeByType = new Map<string, number>();
+  const cadenceByType = new Map(incomeTypes.map((t) => [t.id, t.cadence]));
+  let monthlyCadenceIncomeTotal = 0;
+  const countedIncomeIds = new Set<string>();
+
   for (const income of incomes) {
-    incomeByType.set(
-      income.income_type_id,
-      (incomeByType.get(income.income_type_id) ?? 0) + income.amount
-    );
+    const cadence = cadenceByType.get(income.income_type_id);
+    if (cadence === "monthly") monthlyCadenceIncomeTotal += income.amount;
+    if (window === "monthly" && cadence !== "monthly") continue;
+    countedIncomeIds.add(income.id);
   }
 
   const allocated = new Map<string, number>();
-  const unallocatedIncomeTypeNames: string[] = [];
-  let monthlyCadenceIncomeTotal = 0;
-
-  for (const incomeType of incomeTypes) {
-    const received = incomeByType.get(incomeType.id) ?? 0;
-    if (incomeType.cadence === "monthly") monthlyCadenceIncomeTotal += received;
-    if (received <= 0) continue;
-
-    const cells = allocations.filter((a) => a.income_type_id === incomeType.id);
-    const percents = deriveRowPercents(incomeType.allocation_mode, cells);
-    if (percents === null) {
-      unallocatedIncomeTypeNames.push(incomeType.name);
-      continue;
-    }
-
-    // Monthly budget is driven only by monthly-cadence income.
-    if (window === "monthly" && incomeType.cadence !== "monthly") continue;
-
-    for (const [budgetTypeId, fraction] of percents) {
-      allocated.set(budgetTypeId, (allocated.get(budgetTypeId) ?? 0) + received * fraction);
-    }
+  for (const cell of incomeAllocations) {
+    if (!countedIncomeIds.has(cell.income_id)) continue;
+    allocated.set(cell.budget_type_id, (allocated.get(cell.budget_type_id) ?? 0) + cell.amount);
   }
 
   const spent = new Map<string, number>();
@@ -143,7 +96,7 @@ export function computeBudgetPerformance(params: {
   }
 
   const rows: BudgetPerformanceRow[] = budgetTypes.map((budgetType) => {
-    const alloc = Math.round(allocated.get(budgetType.id) ?? 0);
+    const alloc = allocated.get(budgetType.id) ?? 0;
     const spentTotal = spent.get(budgetType.id) ?? 0;
     return {
       budget_type_id: budgetType.id,
@@ -154,7 +107,7 @@ export function computeBudgetPerformance(params: {
     };
   });
 
-  return { rows, unallocatedIncomeTypeNames, monthlyCadenceIncomeTotal };
+  return { rows, monthlyCadenceIncomeTotal };
 }
 
 export interface TotalsResult {

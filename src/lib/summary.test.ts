@@ -2,12 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   computeBudgetPerformance,
   computeTotals,
-  deriveRowPercents,
-  percentRowSum,
   summarizeEvent,
   summarizeIncomeByType,
-  type AllocationCellInput,
   type BudgetTypeInput,
+  type IncomeAllocationInput,
   type IncomeTypeInput,
 } from "./summary";
 
@@ -19,99 +17,45 @@ const budgetTypes: BudgetTypeInput[] = [
   { id: "bt-giving", name: "Giving" },
 ];
 
-const salary: IncomeTypeInput = {
-  id: "it-salary",
-  name: "Salary",
-  cadence: "monthly",
-  allocation_mode: "amount",
-};
-const thr: IncomeTypeInput = {
-  id: "it-thr",
-  name: "THR",
-  cadence: "yearly",
-  allocation_mode: "percent",
-};
-const bonus: IncomeTypeInput = {
-  id: "it-bonus",
-  name: "Bonus",
-  cadence: "yearly",
-  allocation_mode: "percent",
-};
+const salary: IncomeTypeInput = { id: "it-salary", name: "Salary", cadence: "monthly" };
+const thr: IncomeTypeInput = { id: "it-thr", name: "THR", cadence: "yearly" };
+const bonus: IncomeTypeInput = { id: "it-bonus", name: "Bonus", cadence: "yearly" };
 
-// Salary in amount mode on a 10jt base: 2jt / 1jt / 5jt / 1.5jt / 500k
-const salaryCells: AllocationCellInput[] = [
-  { income_type_id: "it-salary", budget_type_id: "bt-invest", percent: null, amount: 2_000_000 },
-  { income_type_id: "it-salary", budget_type_id: "bt-cash", percent: null, amount: 1_000_000 },
-  { income_type_id: "it-salary", budget_type_id: "bt-life", percent: null, amount: 5_000_000 },
-  { income_type_id: "it-salary", budget_type_id: "bt-fun", percent: null, amount: 1_500_000 },
-  { income_type_id: "it-salary", budget_type_id: "bt-giving", percent: null, amount: 500_000 },
-];
+/** Split helper: cells for one income. */
+function split(incomeId: string, cells: Record<string, number>): IncomeAllocationInput[] {
+  return Object.entries(cells).map(([budget_type_id, amount]) => ({
+    income_id: incomeId,
+    budget_type_id,
+    amount,
+  }));
+}
 
-// THR in percent mode: 20 / 0 / 50 / 30 / 0
-const thrCells: AllocationCellInput[] = [
-  { income_type_id: "it-thr", budget_type_id: "bt-invest", percent: 20, amount: null },
-  { income_type_id: "it-thr", budget_type_id: "bt-cash", percent: 0, amount: null },
-  { income_type_id: "it-thr", budget_type_id: "bt-life", percent: 50, amount: null },
-  { income_type_id: "it-thr", budget_type_id: "bt-fun", percent: 30, amount: null },
-  { income_type_id: "it-thr", budget_type_id: "bt-giving", percent: 0, amount: null },
-];
+// July salary landed at 10.5jt, split 20/10/50/15/5.
+const julySalary = { id: "inc-jul", income_type_id: "it-salary", amount: 10_500_000 };
+const julySalarySplit = split("inc-jul", {
+  "bt-invest": 2_100_000,
+  "bt-cash": 1_050_000,
+  "bt-life": 5_250_000,
+  "bt-fun": 1_575_000,
+  "bt-giving": 525_000,
+});
 
-describe("deriveRowPercents", () => {
-  it("derives % from amounts (amount ÷ row total)", () => {
-    const percents = deriveRowPercents("amount", salaryCells);
-    expect(percents).not.toBeNull();
-    expect(percents!.get("bt-invest")).toBeCloseTo(0.2);
-    expect(percents!.get("bt-cash")).toBeCloseTo(0.1);
-    expect(percents!.get("bt-life")).toBeCloseTo(0.5);
-    expect(percents!.get("bt-fun")).toBeCloseTo(0.15);
-    expect(percents!.get("bt-giving")).toBeCloseTo(0.05);
-    // Amount mode sums to 1 by construction
-    const sum = [...percents!.values()].reduce((s, v) => s + v, 0);
-    expect(sum).toBeCloseTo(1);
-  });
-
-  it("passes percent-mode values through as fractions", () => {
-    const percents = deriveRowPercents("percent", thrCells);
-    expect(percents!.get("bt-invest")).toBeCloseTo(0.2);
-    expect(percents!.get("bt-fun")).toBeCloseTo(0.3);
-    expect(percents!.get("bt-cash")).toBe(0);
-  });
-
-  it("returns null when no allocation is defined", () => {
-    expect(deriveRowPercents("percent", [])).toBeNull();
-    expect(deriveRowPercents("amount", [])).toBeNull();
-    expect(
-      deriveRowPercents("amount", [
-        { income_type_id: "x", budget_type_id: "bt-invest", percent: null, amount: 0 },
-      ])
-    ).toBeNull();
-    expect(
-      deriveRowPercents("percent", [
-        { income_type_id: "x", budget_type_id: "bt-invest", percent: null, amount: null },
-      ])
-    ).toBeNull();
-  });
-
-  it("sums percent rows for the ≠100 warning", () => {
-    expect(percentRowSum(thrCells)).toBe(100);
-    expect(
-      percentRowSum([
-        { income_type_id: "x", budget_type_id: "bt-invest", percent: 40, amount: null },
-        { income_type_id: "x", budget_type_id: "bt-life", percent: 30, amount: null },
-      ])
-    ).toBe(70);
-  });
+// THR 5jt split 20/0/50/30/0 (zero cells not stored).
+const thrIncome = { id: "inc-thr", income_type_id: "it-thr", amount: 5_000_000 };
+const thrSplit = split("inc-thr", {
+  "bt-invest": 1_000_000,
+  "bt-life": 2_500_000,
+  "bt-fun": 1_500_000,
 });
 
 describe("monthly budget performance (salary-based)", () => {
-  it("allocates derived % × actual salary received, not the flat amounts", () => {
-    // Salary lands at 10.5jt instead of the 10jt base → Invest gets 2.1jt, not 2jt
+  it("allocates each income's stored split exactly", () => {
     const result = computeBudgetPerformance({
       window: "monthly",
       incomeTypes: [salary, thr],
       budgetTypes,
-      allocations: [...salaryCells, ...thrCells],
-      incomes: [{ income_type_id: "it-salary", amount: 10_500_000 }],
+      incomes: [julySalary],
+      incomeAllocations: julySalarySplit,
       expenses: [{ budget_type_id: "bt-life", amount: 3_000_000 }],
     });
 
@@ -123,22 +67,37 @@ describe("monthly budget performance (salary-based)", () => {
     expect(byName.Giving.allocated).toBe(525_000);
     expect(byName.Life.spent).toBe(3_000_000);
     expect(byName.Life.remaining).toBe(2_250_000);
+    expect(result.monthlyCadenceIncomeTotal).toBe(10_500_000);
   });
 
-  it("excludes yearly-cadence income (THR) from the monthly budget", () => {
+  it("excludes yearly-cadence income (THR) splits from the monthly budget", () => {
     const result = computeBudgetPerformance({
       window: "monthly",
       incomeTypes: [salary, thr],
       budgetTypes,
-      allocations: [...salaryCells, ...thrCells],
-      incomes: [
-        { income_type_id: "it-salary", amount: 10_000_000 },
-        { income_type_id: "it-thr", amount: 5_000_000 }, // received this month, must not inflate it
+      incomes: [julySalary, thrIncome], // THR received this month must not inflate it
+      incomeAllocations: [...julySalarySplit, ...thrSplit],
+      expenses: [],
+    });
+    const invest = result.rows.find((r) => r.name === "Invest")!;
+    expect(invest.allocated).toBe(2_100_000); // salary split only
+  });
+
+  it("ignores allocation rows whose income is outside the window", () => {
+    // Superset of allocations passed in; only inc-jul is in `incomes`.
+    const result = computeBudgetPerformance({
+      window: "monthly",
+      incomeTypes: [salary],
+      budgetTypes,
+      incomes: [julySalary],
+      incomeAllocations: [
+        ...julySalarySplit,
+        ...split("inc-aug", { "bt-invest": 9_999_999 }),
       ],
       expenses: [],
     });
     const invest = result.rows.find((r) => r.name === "Invest")!;
-    expect(invest.allocated).toBe(2_000_000); // 20% × salary only
+    expect(invest.allocated).toBe(2_100_000);
   });
 
   it("flags overspend via negative remaining", () => {
@@ -146,13 +105,13 @@ describe("monthly budget performance (salary-based)", () => {
       window: "monthly",
       incomeTypes: [salary],
       budgetTypes,
-      allocations: salaryCells,
-      incomes: [{ income_type_id: "it-salary", amount: 10_000_000 }],
+      incomes: [julySalary],
+      incomeAllocations: julySalarySplit,
       expenses: [{ budget_type_id: "bt-fun", amount: 2_000_000 }],
     });
     const fun = result.rows.find((r) => r.name === "Fun")!;
-    expect(fun.allocated).toBe(1_500_000);
-    expect(fun.remaining).toBe(-500_000);
+    expect(fun.allocated).toBe(1_575_000);
+    expect(fun.remaining).toBe(-425_000);
   });
 
   it("handles a no-salary month: allocated 0, spent still counted", () => {
@@ -160,8 +119,8 @@ describe("monthly budget performance (salary-based)", () => {
       window: "monthly",
       incomeTypes: [salary],
       budgetTypes,
-      allocations: salaryCells,
       incomes: [],
+      incomeAllocations: [],
       expenses: [{ budget_type_id: "bt-life", amount: 750_000 }],
     });
     expect(result.monthlyCadenceIncomeTotal).toBe(0);
@@ -170,53 +129,66 @@ describe("monthly budget performance (salary-based)", () => {
     expect(life.spent).toBe(750_000);
     expect(life.remaining).toBe(-750_000);
   });
+
+  it("an income with no stored split contributes 0 (defensive)", () => {
+    const result = computeBudgetPerformance({
+      window: "monthly",
+      incomeTypes: [salary],
+      budgetTypes,
+      incomes: [julySalary],
+      incomeAllocations: [],
+      expenses: [],
+    });
+    expect(result.rows.every((r) => r.allocated === 0)).toBe(true);
+    expect(result.monthlyCadenceIncomeTotal).toBe(10_500_000);
+  });
 });
 
 describe("yearly budget performance (all income)", () => {
-  it("sums each income type's derived % × yearly income per budget type", () => {
+  it("sums the stored splits of every income in the window per budget type", () => {
+    // 12 months of salary (recorded as one row here) + THR
+    const yearSalary = { id: "inc-year", income_type_id: "it-salary", amount: 120_000_000 };
+    const yearSalarySplit = split("inc-year", {
+      "bt-invest": 24_000_000,
+      "bt-cash": 12_000_000,
+      "bt-life": 60_000_000,
+      "bt-fun": 18_000_000,
+      "bt-giving": 6_000_000,
+    });
     const result = computeBudgetPerformance({
       window: "yearly",
       incomeTypes: [salary, thr],
       budgetTypes,
-      allocations: [...salaryCells, ...thrCells],
-      incomes: [
-        // 12 months of salary
-        { income_type_id: "it-salary", amount: 120_000_000 },
-        { income_type_id: "it-thr", amount: 10_000_000 },
-      ],
+      incomes: [yearSalary, thrIncome],
+      incomeAllocations: [...yearSalarySplit, ...thrSplit],
       expenses: [],
     });
     const byName = Object.fromEntries(result.rows.map((r) => [r.name, r]));
-    // Invest: 20% × 120jt + 20% × 10jt = 26jt
-    expect(byName.Invest.allocated).toBe(26_000_000);
-    // Fun: 15% × 120jt + 30% × 10jt = 21jt
-    expect(byName.Fun.allocated).toBe(21_000_000);
-    // Cash: 10% × 120jt + 0% × 10jt = 12jt
-    expect(byName.Cash.allocated).toBe(12_000_000);
+    expect(byName.Invest.allocated).toBe(25_000_000); // 24jt + 1jt
+    expect(byName.Fun.allocated).toBe(19_500_000); // 18jt + 1.5jt
+    expect(byName.Cash.allocated).toBe(12_000_000); // THR gave Cash nothing
   });
 
-  it("excludes income types without an allocation and reports them", () => {
+  it("yearly window counts yearly-cadence incomes (unlike monthly)", () => {
+    const bonusIncome = { id: "inc-bonus", income_type_id: "it-bonus", amount: 8_000_000 };
     const result = computeBudgetPerformance({
       window: "yearly",
-      incomeTypes: [salary, bonus], // bonus has no allocation cells
+      incomeTypes: [salary, bonus],
       budgetTypes,
-      allocations: salaryCells,
-      incomes: [
-        { income_type_id: "it-salary", amount: 120_000_000 },
-        { income_type_id: "it-bonus", amount: 8_000_000 },
-      ],
+      incomes: [bonusIncome],
+      incomeAllocations: split("inc-bonus", { "bt-invest": 8_000_000 }),
       expenses: [],
     });
-    expect(result.unallocatedIncomeTypeNames).toEqual(["Bonus"]);
     const invest = result.rows.find((r) => r.name === "Invest")!;
-    expect(invest.allocated).toBe(24_000_000); // salary only — bonus excluded
+    expect(invest.allocated).toBe(8_000_000);
+    expect(result.monthlyCadenceIncomeTotal).toBe(0);
   });
 });
 
 describe("totals and groupings", () => {
   it("computes income / expenses / net", () => {
     const totals = computeTotals(
-      [{ income_type_id: "it-salary", amount: 10_000_000 }],
+      [{ id: "i1", income_type_id: "it-salary", amount: 10_000_000 }],
       [
         { budget_type_id: "bt-life", amount: 3_000_000 },
         { budget_type_id: "bt-fun", amount: 500_000 },
@@ -228,8 +200,8 @@ describe("totals and groupings", () => {
   it("summarizes income by type, non-zero only, largest first", () => {
     const rows = summarizeIncomeByType(
       [
-        { income_type_id: "it-salary", amount: 10_000_000 },
-        { income_type_id: "it-thr", amount: 12_000_000 },
+        { id: "i1", income_type_id: "it-salary", amount: 10_000_000 },
+        { id: "i2", income_type_id: "it-thr", amount: 12_000_000 },
       ],
       [salary, thr, bonus]
     );

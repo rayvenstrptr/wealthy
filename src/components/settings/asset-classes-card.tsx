@@ -3,22 +3,19 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { Check, X } from "lucide-react";
-import { createBudgetType, updateBudgetType } from "@/lib/actions/settings";
-import { envelopeHue } from "@/lib/envelope-colors";
-import type { BudgetType } from "@/lib/types";
+import { createAssetClass, updateAssetClass } from "@/lib/actions/investments";
+import { assetClassHue } from "@/lib/asset-class-colors";
+import type { AssetClass } from "@/lib/types";
 import { ArchivedRow } from "./income-types-card";
 
-interface BudgetTypesCardProps {
-  budgetTypes: BudgetType[];
+interface AssetClassesCardProps {
+  assetClasses: AssetClass[];
 }
 
-/**
- * Budget-type manager as a row of envelope-tinted chips. Clicking a chip edits
- * it in place (rename / archive); a dashed "+ Add" chip creates a new one.
- */
-export function BudgetTypesCard({ budgetTypes }: BudgetTypesCardProps) {
-  const active = budgetTypes.filter((t) => t.is_active);
-  const archived = budgetTypes.filter((t) => !t.is_active);
+/** Asset-class manager as tinted chips — same interaction as budget types. */
+export function AssetClassesCard({ assetClasses }: AssetClassesCardProps) {
+  const active = assetClasses.filter((c) => c.is_active);
+  const archived = assetClasses.filter((c) => !c.is_active);
 
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
@@ -28,9 +25,9 @@ export function BudgetTypesCard({ budgetTypes }: BudgetTypesCardProps) {
     if (!newName.trim()) return toast.error("Name is required.");
     setBusy(true);
     try {
-      const result = await createBudgetType(newName);
+      const result = await createAssetClass(newName);
       if (!result.ok) return toast.error(result.error);
-      toast.success("Budget type added");
+      toast.success("Asset class added");
       setNewName("");
       setAdding(false);
     } finally {
@@ -40,8 +37,8 @@ export function BudgetTypesCard({ budgetTypes }: BudgetTypesCardProps) {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {active.map((budgetType) => (
-        <BudgetChip key={budgetType.id} budgetType={budgetType} />
+      {active.map((assetClass) => (
+        <ClassChip key={assetClass.id} assetClass={assetClass} />
       ))}
 
       {adding ? (
@@ -58,13 +55,13 @@ export function BudgetTypesCard({ budgetTypes }: BudgetTypesCardProps) {
             }}
             placeholder="Name"
             autoFocus
-            className="w-20 bg-transparent text-[12px] font-semibold outline-none placeholder:text-placeholder"
+            className="w-24 bg-transparent text-[12px] font-semibold outline-none placeholder:text-placeholder"
           />
           <button
             type="button"
             onClick={handleAdd}
             disabled={busy}
-            aria-label="Save new budget type"
+            aria-label="Save new asset class"
             className="text-muted-foreground hover:text-foreground"
           >
             <Check className="size-3.5" />
@@ -86,12 +83,12 @@ export function BudgetTypesCard({ budgetTypes }: BudgetTypesCardProps) {
             Archived ({archived.length})
           </summary>
           <div className="mt-2 max-w-xs space-y-1">
-            {archived.map((budgetType) => (
+            {archived.map((assetClass) => (
               <ArchivedRow
-                key={budgetType.id}
-                name={budgetType.name}
+                key={assetClass.id}
+                name={assetClass.name}
                 struck={false}
-                onRestore={() => updateBudgetType(budgetType.id, { is_active: true })}
+                onRestore={() => updateAssetClass(assetClass.id, { is_active: true })}
               />
             ))}
           </div>
@@ -101,19 +98,19 @@ export function BudgetTypesCard({ budgetTypes }: BudgetTypesCardProps) {
   );
 }
 
-function BudgetChip({ budgetType }: { budgetType: BudgetType }) {
-  const hue = envelopeHue(budgetType.name);
+function ClassChip({ assetClass }: { assetClass: AssetClass }) {
+  const hue = assetClassHue(assetClass.name);
   const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(budgetType.name);
+  const [name, setName] = useState(assetClass.name);
   const [busy, setBusy] = useState(false);
 
   async function handleSave() {
-    if (name.trim() && name !== budgetType.name) {
+    if (name.trim() && name !== assetClass.name) {
       setBusy(true);
       try {
-        const result = await updateBudgetType(budgetType.id, { name });
+        const result = await updateAssetClass(assetClass.id, { name });
         if (!result.ok) return toast.error(result.error);
-        toast.success("Budget type renamed");
+        toast.success("Asset class renamed");
       } finally {
         setBusy(false);
       }
@@ -124,15 +121,15 @@ function BudgetChip({ budgetType }: { budgetType: BudgetType }) {
   async function handleArchive() {
     if (
       !window.confirm(
-        `Archive "${budgetType.name}"? Its allocation cells are hidden and it disappears from forms, but history keeps it.`
+        `Archive "${assetClass.name}"? It disappears from the investments page and forms; its holdings stay in the totals.`
       )
     )
       return;
     setBusy(true);
     try {
-      const result = await updateBudgetType(budgetType.id, { is_active: false });
+      const result = await updateAssetClass(assetClass.id, { is_active: false });
       if (!result.ok) return toast.error(result.error);
-      toast.success("Budget type archived");
+      toast.success("Asset class archived");
     } finally {
       setBusy(false);
     }
@@ -151,28 +148,22 @@ function BudgetChip({ budgetType }: { budgetType: BudgetType }) {
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSave();
             if (e.key === "Escape") {
-              setName(budgetType.name);
+              setName(assetClass.name);
               setEditing(false);
             }
           }}
           autoFocus
-          className="w-16 bg-transparent text-[12px] font-semibold outline-none"
+          className="w-20 bg-transparent text-[12px] font-semibold outline-none"
           style={{ color: hue.text }}
         />
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={busy}
-          aria-label="Save"
-          style={{ color: hue.text }}
-        >
+        <button type="button" onClick={handleSave} disabled={busy} aria-label="Save" style={{ color: hue.text }}>
           <Check className="size-3.5" />
         </button>
         <button
           type="button"
           onClick={handleArchive}
           disabled={busy}
-          aria-label={`Archive ${budgetType.name}`}
+          aria-label={`Archive ${assetClass.name}`}
           style={{ color: hue.text }}
         >
           <X className="size-3.5" />
@@ -189,15 +180,7 @@ function BudgetChip({ budgetType }: { budgetType: BudgetType }) {
       style={{ background: hue.tint, color: hue.text }}
     >
       <span className="size-[7px] rounded-full" style={{ background: hue.fill }} />
-      {budgetType.name}
-      {budgetType.kind === "investment" && (
-        <span
-          className="rounded-full px-1.5 py-px text-[9.5px] font-bold tracking-[0.05em] text-white uppercase"
-          style={{ background: hue.fill }}
-        >
-          investment
-        </span>
-      )}
+      {assetClass.name}
     </button>
   );
 }

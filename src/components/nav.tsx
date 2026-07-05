@@ -9,16 +9,19 @@ import {
   Plus,
   ReceiptText,
   Settings,
+  TrendingUp,
 } from "lucide-react";
 import { useAddExpense } from "@/components/add-expense-provider";
 import { cn } from "@/lib/utils";
 
+// `short` is the mobile tab label — 6 tabs need tighter copy.
 const items = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/expenses", label: "Expenses", icon: ReceiptText },
-  { href: "/income", label: "Income", icon: Banknote },
-  { href: "/events", label: "Events", icon: CalendarRange },
-  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/", label: "Dashboard", short: "Home", icon: LayoutDashboard },
+  { href: "/expenses", label: "Expenses", short: "Expenses", icon: ReceiptText },
+  { href: "/income", label: "Income", short: "Income", icon: Banknote },
+  { href: "/investments", label: "Invest", short: "Invest", icon: TrendingUp },
+  { href: "/events", label: "Events", short: "Events", icon: CalendarRange },
+  { href: "/settings", label: "Settings", short: "Settings", icon: Settings },
 ];
 
 function isActive(pathname: string, href: string) {
@@ -77,7 +80,7 @@ export function Nav() {
 
       {/* Mobile bottom tab bar */}
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
-        <div className="grid grid-cols-5 px-1.5 pt-2 pb-3">
+        <div className="grid grid-cols-6 px-1 pt-2 pb-3">
           {items.map((item) => {
             const Icon = item.icon;
             const active = isActive(pathname, item.href);
@@ -86,19 +89,19 @@ export function Nav() {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "flex flex-col items-center gap-1 text-[10px] font-semibold",
+                  "flex flex-col items-center gap-1 text-[9.5px] font-semibold",
                   active ? "text-foreground" : "font-normal text-muted-foreground"
                 )}
               >
                 <span
                   className={cn(
-                    "flex h-[26px] w-11 items-center justify-center rounded-full transition-colors",
+                    "flex h-[26px] w-10 items-center justify-center rounded-full transition-colors",
                     active && "bg-secondary"
                   )}
                 >
                   <Icon className="size-[18px]" />
                 </span>
-                {item.label}
+                {item.short}
               </Link>
             );
           })}

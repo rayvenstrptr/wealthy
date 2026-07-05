@@ -7,9 +7,17 @@ import {
   monthRange,
   yearRange,
 } from "@/lib/dates";
-import { getConfig, getExpenses, getIncomes } from "@/lib/data";
+import {
+  getConfig,
+  getExpenses,
+  getIncomeAllocations,
+  getIncomes,
+  getInvestmentConfig,
+  getInvestmentTransactions,
+} from "@/lib/data";
 import { envelopeHue } from "@/lib/envelope-colors";
 import { formatIDR } from "@/lib/format";
+import { computeDeployed } from "@/lib/investments";
 import {
   computeBudgetPerformance,
   computeTotals,
@@ -22,7 +30,6 @@ import {
   PeriodPicker,
   type DashboardView,
 } from "@/components/dashboard/period-picker";
-import { Badge } from "@/components/ui/badge";
 
 interface SearchParams {
   view?: string;
@@ -43,22 +50,41 @@ export default async function DashboardPage({
   const range =
     view === "monthly" ? monthRange(month) : view === "yearly" ? yearRange(year) : undefined;
 
-  const [config, incomes, expenses] = await Promise.all([
+  const [config, incomes, expenses, investmentConfig, investmentTxs] = await Promise.all([
     getConfig(),
     getIncomes({ start: range?.start, end: range?.end }),
     getExpenses({ start: range?.start, end: range?.end }),
+    getInvestmentConfig(),
+    getInvestmentTransactions(),
   ]);
+  const incomeAllocations = await getIncomeAllocations(incomes.map((i) => i.id));
 
+  // Expenses never include investments — buys/sells live in the investment
+  // module and only drive the Invest envelope's "deployed" number below.
   const totals = computeTotals(incomes, expenses);
 
   const performance = computeBudgetPerformance({
     window: view === "monthly" ? "monthly" : "yearly",
     incomeTypes: config.incomeTypes,
     budgetTypes: config.budgetTypes,
-    allocations: config.allocations,
     incomes,
+    incomeAllocations,
     expenses,
   });
+
+  // Investment-kind envelopes are "spent" by net buys (buys − sell proceeds)
+  // in the same window, not by expenses.
+  const deployedByClass = computeDeployed(investmentTxs, investmentConfig.items, range);
+  let deployedTotal = 0;
+  for (const value of deployedByClass.values()) deployedTotal += value;
+  const kindById = new Map(config.budgetTypes.map((b) => [b.id, b.kind]));
+  for (const row of performance.rows) {
+    if (kindById.get(row.budget_type_id) === "investment") {
+      row.spent = deployedTotal;
+      row.remaining = row.allocated - deployedTotal;
+    }
+  }
+
   const activeById = new Map(config.budgetTypes.map((b) => [b.id, b.is_active]));
   const performanceRows = performance.rows.filter(
     (row) => activeById.get(row.budget_type_id) || row.allocated !== 0 || row.spent !== 0
@@ -78,20 +104,16 @@ export default async function DashboardPage({
     : "Everything ever recorded";
   const envelopeHint =
     view === "monthly"
-      ? "Salary-based budget"
+      ? "Salary splits this budget month"
       : view === "yearly"
-        ? `All income received in ${year} × each type's split`
-        : "All income ever received × each type's split";
-
-  const warnings = performance.unallocatedIncomeTypeNames;
+        ? `Sum of each income's envelope split in ${year}`
+        : "Every income's envelope split, all time";
 
   return (
     <div className="pb-4">
       {/* ============ MOBILE ============ */}
       <div className="md:hidden">
         <MobilePeriod view={view} month={month} year={year} />
-
-        {warnings.length > 0 && <WarningChips names={warnings} className="mt-4" />}
 
         {/* Ink hero replaces the stat trio on mobile */}
         <div className="mt-[18px] rounded-[16px] bg-primary px-5 py-[18px] text-primary-foreground">
@@ -117,9 +139,15 @@ export default async function DashboardPage({
         <div className="mt-[22px] text-[14px] font-bold">Envelopes</div>
         {noSalaryThisMonth && <NoSalaryNote className="mt-2.5" />}
         <div className="mt-2.5 flex flex-col gap-[9px]">
-          {performanceRows.map((row) => (
-            <EnvelopeRow key={row.budget_type_id} row={row} />
-          ))}
+          {performanceRows.map((row) =>
+            kindById.get(row.budget_type_id) === "investment" ? (
+              <Link key={row.budget_type_id} href="/investments" className="block">
+                <EnvelopeRow row={row} verb="deployed" />
+              </Link>
+            ) : (
+              <EnvelopeRow key={row.budget_type_id} row={row} />
+            )
+          )}
         </div>
 
         {view === "monthly" && (
@@ -165,8 +193,6 @@ export default async function DashboardPage({
           <PeriodPicker view={view} month={month} year={year} />
         </div>
 
-        {warnings.length > 0 && <WarningChips names={warnings} className="mt-6" />}
-
         {/* Stat trio */}
         <div className="mt-6 grid grid-cols-3 gap-3.5">
           <StatCard label="Total income" value={totals.income} />
@@ -189,9 +215,15 @@ export default async function DashboardPage({
         </div>
         {noSalaryThisMonth && <NoSalaryNote className="mt-3.5" />}
         <div className="mt-3.5 grid grid-cols-5 gap-3.5">
-          {performanceRows.map((row) => (
-            <EnvelopeCard key={row.budget_type_id} row={row} />
-          ))}
+          {performanceRows.map((row) =>
+            kindById.get(row.budget_type_id) === "investment" ? (
+              <Link key={row.budget_type_id} href="/investments" className="block">
+                <EnvelopeCard row={row} verb="deployed" />
+              </Link>
+            ) : (
+              <EnvelopeCard key={row.budget_type_id} row={row} />
+            )
+          )}
         </div>
 
         {/* Lower grid */}
@@ -342,18 +374,6 @@ function Dot({ name, size }: { name: string | undefined; size: number }) {
       className="inline-block rounded-full"
       style={{ width: size, height: size, background: envelopeHue(name).fill }}
     />
-  );
-}
-
-function WarningChips({ names, className }: { names: string[]; className?: string }) {
-  return (
-    <div className={`flex flex-wrap gap-1.5 ${className ?? ""}`}>
-      {names.map((name) => (
-        <Badge key={name} variant="warning">
-          ⚠ {name} has no budget split configured
-        </Badge>
-      ))}
-    </div>
   );
 }
 

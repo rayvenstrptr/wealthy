@@ -1,21 +1,21 @@
 # Personal Wealth Dashboard — Project Brief
 
-Personal finance tracker for a single user (Ray). Tracks income and expenses against a percentage-based budgeting system with **per-income-type allocations**. v1 scope is **income + expense tracking only** — asset/investment tracking comes later, so the schema allows it without rework.
+Personal finance tracker for a single user (Ray). Tracks income and expenses against a percentage-based budgeting system with **per-income envelope splits**, plus an **investments module** (v2) — asset classes with per-year risk targets, buy/sell tracking, realized-only performance, and a net-worth headline.
 
 Currency: **IDR only**. No decimals. Display format: `Rp 1.250.000`. Common shorthand in this doc: `jt` = juta = million.
 Timezone: Asia/Jakarta (WIB).
 
-## Implementation status (v1 BUILT — front-end improvement IN PROGRESS)
+## Implementation status (v2 BUILT)
 
-All functional build phases are **done and verified** (unit tests + production build + live smoke test). The **front-end improvement** phase is now **underway** (uncommitted on top of the `Personal wealth dashboard v1` commit): a visual "Envelope" identity has landed — per-budget-type color system in `src/lib/envelope-colors.ts`, tinted `EnvelopeCard`s on the dashboard, and a shared Add-Expense dialog. See the last section for the map and rules of engagement; keep going from here rather than restarting.
+v1 (income + expenses + allocation matrix) and the first front-end pass (Envelope visual identity, shared Add-Expense dialog) are done and committed. **v2 is built and verified** (unit tests + production build + live smoke test): the allocation matrix was REPLACED by per-income envelope splits, and the investments module + `/investments` page were added. Demo data was wiped and reseeded for v2 (delete `.mock/db.json` to reseed anytime).
 
 Key implementation decisions already made (do not relitigate without reason):
 
 - **supabase-js directly** (no Drizzle) — RLS + auth flow through `@supabase/ssr` clients.
-- **Local mock mode**: when `NEXT_PUBLIC_SUPABASE_URL` is unset, the app runs with no auth and a file-backed store at `.mock/db.json` (seeded like the SQL trigger + demo entries). Ray is running **local-first for now** — don't push Supabase/Vercel setup. Delete `.mock/db.json` to reseed.
-- **Dev server runs on port 888** (`npm run dev`).
-- shadcn/ui here is the **Base UI** flavor (`@base-ui/react`, not Radix): triggers use `render`
-  props not `asChild`; Select takes `items` + `onValueChange`. Follow existing component usage.
+- **Local mock mode**: when `NEXT_PUBLIC_SUPABASE_URL` is unset, the app runs with no auth and a file-backed store at `.mock/db.json` (seeded like the SQL trigger + demo entries). Ray is running **local-first for now** — don't push Supabase/Vercel setup. A pre-v2 db.json is auto-detected and reseeded.
+- **Dev server runs on port 888** (`npm run dev`). The Claude preview tool can't bind ports <1024 — `.claude/launch.json` runs it on 3888 for previews.
+- shadcn/ui here is the **Base UI** flavor (`@base-ui/react`, not Radix): triggers use `render` props not `asChild`; Select takes `items` + `onValueChange`. Follow existing component usage.
+- Income+split and income-migration writes are **two inserts with compensating delete** (supabase-js has no transactions) — acceptable single-user risk; use an RPC if Supabase is ever deployed.
 
 ## Stack
 
@@ -23,141 +23,107 @@ Key implementation decisions already made (do not relitigate without reason):
 - Supabase (Postgres + Auth) — deployed on Vercel eventually, so no SQLite
 - Tailwind CSS v4 + shadcn/ui (Base UI primitives)
 - supabase-js via `@supabase/ssr`; single user: one Supabase account, RLS on `user_id` on every table
-- Vitest for the summary-math unit tests
+- Vitest for the pure-math unit tests (`npm test`)
 
 ## Core Concepts
 
 Two separate taxonomies — do NOT merge them:
 
-1. **Budget types** answer "which envelope does this money go to?" — Invest, Cash, Life, Fun, Giving.
+1. **Budget types (envelopes)** answer "which envelope does this money go to?" — Invest, Cash, Life, Fun, Giving. Each has a `kind`: `'spending'` or `'investment'` (seed-fixed in v2; Invest is the only investment-kind envelope).
 2. **Expense categories** answer "what was it spent on?" — Food, Transport, etc. Secondary; used for drill-down only.
 
-Every expense requires BOTH a budget type and an expense category.
+Every expense requires BOTH a budget type and an expense category — but **only spending-kind budget types**: investment envelopes are deployed via the investments module, never via expenses (single source of record; selling 50jt and rebuying 55jt must not explode expense totals).
 
 ### Budget month cycle (payday-based) — IMPORTANT
 
 Ray's payday is the **25th**. A budget month runs from the **25th of the previous calendar month to the 24th of the labeled month**:
 
 - "January 2026" = 25 Dec 2025 – 24 Jan 2026
-- "February 2026" = 25 Jan – 24 Feb 2026
 - A salary received 25 Dec funds **January's** budget.
 
-Budget years follow the same cycle: "2026" = 25 Dec 2025 – 24 Dec 2026, so every budget month belongs to exactly one budget year. All of this lives in `src/lib/dates.ts` (`CYCLE_START_DAY`, `budgetMonthOf`, `monthRange`, `yearRange`) with unit tests in `dates.test.ts`. The UI always shows the resolved date range ("Budget month: 25 Jun – 24 Jul") so the cycle is never ambiguous.
+Budget years follow the same cycle: "2026" = 25 Dec 2025 – 24 Dec 2026. All of this lives in `src/lib/dates.ts` (`CYCLE_START_DAY`, `budgetMonthOf`, `monthRange`, `yearRange`) with unit tests. The UI always shows the resolved date range so the cycle is never ambiguous.
 
 ### Income cadence
 
-Each income type has a `cadence`:
+Each income type has a `cadence`: `monthly` (only **Salary** — drives the monthly budget) or `yearly` (everything else). Cadence controls which window an income's split funds: monthly-cadence splits count in the monthly view; ALL splits count in yearly/all-time. Configurable per income type in Settings.
 
-- `monthly` — only **Salary**. Drives the monthly budget.
-- `yearly` — everything else (Yield, Bonus, Angpao, THR, TCG Yield, Others). Budgeted and summarized on a yearly window only.
+### Per-income envelope splits (v2 — replaced the allocation matrix)
 
-Note: cadence controls where an income type drives the *budget*, not where it appears in summaries. Salary counts in BOTH windows — it drives the monthly budget, and all 12 months of it roll up into the yearly totals and yearly budget alongside the yearly-cadence types.
+Every income entry stores its own split across envelopes in `income_allocations` (amounts, one row per non-zero cell). **The app's one HARD validation: split amounts must sum EXACTLY to the income amount** — enforced in the form (submit disabled, amber "Remaining to allocate" line) and in the server action. Rationale: any income varies from one entry to the next, salary included, so portions are decided at record time.
 
-Cadence is configurable per income type in Settings.
+- The split editor (`income-split-editor.tsx`) has an Rp | % toggle. Amounts are the stored truth; % mode converts via `splitFromPercents` (rounding remainder → largest cell, only force-summed when percents hit 100).
+- **Prefill**: picking an income type prefills the split from the most recent income of that type, proportionally scaled to the new amount (`scaleSplit`, remainder → largest cell). Hand-editing a cell stops re-prefill.
+- Inline amount edits in the income list re-scale the stored split proportionally so the sum rule keeps holding.
+- Allocated per envelope per window = Σ stored splits of counted incomes (`computeBudgetPerformance`) — exact sums, no derivation. The old "type has no split configured" warning is obsolete; splits ARE historical snapshots, so editing future splits never rewrites past months.
 
-### Budget allocation matrix (the heart of the app)
+### Investments module (v2)
 
-Budget split is **per income type**, not global. Each income type has its own allocation row per budget type.
+Ray invests irregularly ("buy when the time is right"), splitting risk across **asset classes**: Commodities 5 / Stocks 45 / Fixed 25 / Crypto 5 / Others 12.5 / Business 5 / Buffer 2.5 (seed defaults). Rules:
 
-**Entry modes** — per income type, the user picks ONE mode for its allocation row:
-
-- `percent` mode: enter % per budget type. Warn (don't block) if they don't sum to 100.
-- `amount` mode: enter IDR per budget type. Derived % = `amount ÷ sum of amounts for that income type`. Derived % shown live as the user types. The row also shows **Total: Rp X · last `<type>` received: Rp Y** and warns (don't block) when the amounts total differs from the most recent actual income of that type.
-
-**Application rule:** amounts are only a convenient way to define percentages. When actual income lands, allocation is ALWAYS `derived % × actual amount received`. (If salary comes in at 10.5jt instead of 10jt, Invest gets 20% × 10.5jt = 2.1jt, not the flat 2jt.)
-
-**How allocations meet expenses:** expenses are NOT linked to income types. Reconciliation happens at three windows:
-
-- **Monthly:** allocated = that budget month's `monthly`-cadence income (Salary) × Salary's %s vs that month's expenses per budget type.
-- **Yearly:** allocated = ALL income received that budget year × each income type's %s, summed per budget type, vs that year's expenses.
-- **All-time:** same rule as yearly over everything ever recorded — lifetime envelope balance.
-
-Yearly incomes (THR, Bonus…) never inflate a single month's budget. Unspent monthly budget does NOT carry over in v1.
-
-Edge case: income of a type with no allocation defined → counted in income summaries, excluded from budget allocation, warning chip on the dashboard ("THR has no budget split configured").
+- **Targets are per budget YEAR** (`asset_class_targets`: class × year × percent). Changing the split means changing the whole year. Sum ≠ 100 warns, never blocks (Settings → Investments).
+- **Investment budget** = income allocated to investment-kind envelopes in the budget year. Class budget = invest budget × target %.
+- **Items** (`investment_items`) are the buyable things per class (BBCA, BTC, Deposito Superbank…). Managed in Settings; inline-creatable from the transaction form. Archive, never hard-delete.
+- **Transactions** (`investment_transactions`): buy/sell, `amount` = total IDR, optional `quantity` (unit price derived, never stored).
+- **Deployed = buys − sell proceeds** (net) per class per window — sells replenish the year's budget. A buy exceeding the class's remaining budget **warns, never blocks** (Ray intentionally overshoots sometimes). **Overselling is a HARD error** (`validateSell` in the actions).
+- **Performance is realized-only, average cost** (`src/lib/investments.ts`, unit-tested): with quantity, sell basis = qty × avg cost; without quantity, a sell closes the ENTIRE outstanding cost (deposito-style); realized % is cumulative Σrealized ÷ Σbasis-sold (Ray's −800k then +1jt → +200k example). Holdings shown at cost — no market valuations in v2.
+- **Windowing**: holdings/positions are always the current all-time state; realized P&L and deployed are windowed (yearly view) or total (all-time view).
+- **Net worth = holdings at cost + max(current-year budget − current-year deployed, 0)** — shown on `/investments`.
+- Dashboard: the Invest envelope card shows **Allocated vs Deployed** (net buys in the same window) and links to `/investments`.
 
 ## Data Model
 
-See `supabase/migrations/00001_init.sql` for the authoritative schema (tables: `income_types`, `budget_types`, `budget_allocations`, `expense_categories`, `events`, `incomes`, `expenses`; RLS on `user_id` everywhere; seed trigger `seed_user_defaults()` on `auth.users` insert). Rules that matter when touching code:
+See `supabase/migrations/00001_init.sql` for the authoritative schema (rewritten in place for v2 — it was never deployed). Tables: `income_types`, `budget_types` (+`kind`), `expense_categories`, `events`, `incomes`, `income_allocations`, `expenses`, `asset_classes`, `asset_class_targets`, `investment_items`, `investment_transactions`; RLS on `user_id` everywhere; seed trigger `seed_user_defaults()`. Rules that matter when touching code:
 
-- Money is `bigint` IDR — never floats. Dates are `date`, day-granular.
-- `budget_allocations` has `percent` OR `amount` per cell depending on the row's mode; the derived % for amount mode is computed in app code (`deriveRowPercents`), never stored.
-- Types/categories/events referenced by entries can't be hard-deleted — archive (`is_active = false`). Archived items disappear from entry forms but still render in history.
+- Money is `bigint` IDR — never floats. Dates are `date`, day-granular. `quantity` is numeric (fractional units like 0.0005 BTC).
+- `income_allocations` stores only non-zero cells; cascade-deleted with the income.
+- Types/categories/classes/items referenced by entries can't be hard-deleted — archive (`is_active = false`). Archived items disappear from entry forms but still render in history; archived classes keep their holdings in totals.
+- `budget_types.kind` is seed-fixed — no UI to flip spending↔investment in v2.
 
-Seed data (defaults on first run): income types Salary(monthly)/Yield/Bonus/Angpao/THR/TCG Yield/Others; budget types Invest/Cash/Life/Fun/Giving; Salary amounts 2jt/1jt/5jt/1.5jt/500k, THR 20/0/50/30/0, others 20/10/50/15/5; the 11 expense categories with default budget types.
-
-## Acceptance Criteria (all implemented)
-
-**AC1 — Income types:** Settings: add / rename / archive / restore income types, set cadence.
-
-**AC2 — Budget types + allocation matrix:** add/rename/archive budget types; matrix editor with per-row %/Rp mode toggle, live derived %, sum≠100 warning (percent mode), row-total-vs-latest-income warning (amount mode).
-
-**AC3 — Expense categories:** add / rename / archive, set default budget type (prefills expense form).
-
-**AC4 — Expense entry:** name, amount (IDR input with separators), date (default today WIB), budget type (prefilled from category default), category, optional event (select or create inline), notes. Fast on mobile; after save: toast + reset keeping date. **List rows:** name and amount editable inline (blur/Enter saves, Esc reverts); other fields via the pencil → edit dialog. List has **search** (name, debounced) + month/budget/category/event filters.
-
-**AC5 — Income entry:** name, amount, date, income type; notes optional. Same inline edit + search + filters on the list.
-
-**AC6 — Summaries:** three dashboard views (Monthly | Yearly | All time), each with stat cards (Total Income / Total Expenses / Net) and budget performance rows (allocated / spent / remaining + progress bar, red on overspend):
-
-- *Monthly*: salary-based budget; "no salary this month" info note; recent 10 expenses.
-- *Yearly*: all-income budget; income by type split into monthly vs yearly cadence groups.
-- *All time*: totals of everything ever recorded; all-income budget rule.
-- *Event view*: `/events/[id]` — total + breakdowns by budget type and category; ignores period filters (events cross months/years).
+Seed data: income types Salary(monthly)/Yield/Bonus/Angpao/THR/TCG Yield/Others; budget types Invest(investment)/Cash/Life/Fun/Giving; 10 expense categories (NO "Invest" category); 7 asset classes with current-budget-year targets; default items (Stocks: BBCA/CDIA/BMRI/AAPL, Crypto: BTC/ETH/SOL, Fixed: Deposito Superbank, Pasar Uang BRI); demo incomes carry exact-sum splits; demo transactions include a BBCA round trip (+180k realized) and a no-quantity deposito buy.
 
 ## Pages
 
 ```
-/            Dashboard — Monthly | Yearly | All time (the money screen)
-/expenses    Expense list (search + filters, inline edit) + add/edit
-/income      Income list (search + filters, inline edit) + add/edit
-/events      Event list + per-event summary at /events/[id]
-/settings    Income types, budget types + allocation matrix, categories, sign out
-/login       Only reachable when Supabase is configured
+/             Dashboard — Monthly | Yearly | All time (the money screen)
+/expenses     Expense list (search + filters, inline edit) + add/edit
+/income       Income list (search + filters, inline edit) + add/edit with split editor
+/investments  Yearly | All time — net worth, class cards, holdings drill-down, buy/sell entry
+/events       Event list + per-event summary at /events/[id]
+/settings     Income types, categories, Investments (classes/targets/items), envelopes, sign out
+/login        Only reachable when Supabase is configured
 ```
 
-Mobile-first. A single "+ Expense" dialog is owned by `AddExpenseProvider` in `src/app/(app)/layout.tsx` and opened via the `useAddExpense()` context from both the floating FAB (`expense-fab.tsx`) and the desktop nav button (`nav.tsx`). The dialog stays open after save (form resets keeping the date) for rapid back-to-back entry.
+Mobile-first; the bottom tab bar has **6 tabs** (Home/Expenses/Income/Invest/Events/Settings). A single "+ Expense" dialog is owned by `AddExpenseProvider` in `src/app/(app)/layout.tsx` and opened via `useAddExpense()` from both the FAB and the desktop nav; it stays open after save for rapid entry.
 
 ## Conventions
 
-- All summary math lives in `src/lib/summary.ts`; all cycle/date logic in `src/lib/dates.ts` — both pure and unit-tested (`npm test`). Never compute budget numbers in components.
-- Server components read via `src/lib/data.ts`; writes via server actions in `src/lib/actions/*` returning `{ ok } | { ok: false, error }`. Every write path has a mock-mode branch (`src/lib/mock/*`) — keep both in sync when changing the data layer.
+- All summary math lives in `src/lib/summary.ts`; investment math in `src/lib/investments.ts`; split-editor math in `src/lib/allocation-split.ts`; cycle/date logic in `src/lib/dates.ts` — all pure and unit-tested (`npm test`). **Never compute budget/investment numbers in components.**
+- Server components read via `src/lib/data.ts`; writes via server actions in `src/lib/actions/*` returning `{ ok } | { ok: false, error }`. **Every read/write path has a mock-mode branch** (`src/lib/mock/api.ts`, store in `src/lib/mock/store.ts`) — keep both in sync when changing the data layer, including the seed.
 - Money formatting via `formatIDR`/`formatNumber` in `src/lib/format.ts` (id-ID separators).
+- Philosophy: **warn, don't block** (target sums, over-budget buys) — the two exceptions are the income split sum (hard) and oversells (hard).
 
-## Front-end improvement — next phase
+## Front-end map
 
-Functionality is complete; the visual pass is in progress (Envelope identity landed). When continuing the front end:
-
-**File map (UI only):**
-
-- `src/app/(app)/page.tsx` — dashboard (stat cards, envelope cards, income/category sections)
-- `src/components/dashboard/` — `period-picker`, `budget-performance`, `envelope-card` (tinted per-type card)
-- `src/lib/envelope-colors.ts` — `envelopeHue(name)` → per-budget-type colors (oklch fill/tint/text/track; gold=Invest, green=Cash, red=Life, purple=Fun, blue=Giving; warm-neutral fallback). **Pure presentation, no data logic.**
-- `src/components/add-expense-provider.tsx` — owns the shared Add-Expense dialog; `useAddExpense()` opens it
-- `src/components/expense-*` / `income-*` / `event-*` — lists, forms, filters, FAB
+- `src/app/(app)/page.tsx` — dashboard (stat cards, envelope cards incl. Invest→deployed variant)
+- `src/app/(app)/investments/page.tsx` — all investments math orchestration + layout
+- `src/components/dashboard/` — `period-picker`, `budget-performance`, `envelope-card` (has `verb="deployed"` prop)
+- `src/components/investments/` — `period-picker` (Yearly|All-time), `class-card`, `item-section` (holdings accordion + tx edit), `transaction-form` (inline item create, over-budget warn chip), `transaction-dialog`
+- `src/lib/envelope-colors.ts` / `src/lib/asset-class-colors.ts` — `envelopeHue(name)` / `assetClassHue(name)` → oklch {fill,tint,text,track}; pure presentation, warm-neutral fallback
+- `src/components/income-split-editor.tsx` — the Rp/% split editor; `income-form.tsx` owns prefill state
+- `src/components/add-expense-provider.tsx` — shared Add-Expense dialog (`useAddExpense()`)
 - `src/components/inline-edit.tsx`, `amount-input.tsx`, `simple-select.tsx` — shared field primitives
-- `src/components/settings/` — cards + `allocation-matrix` (the most complex UI)
-- `src/components/nav.tsx` — desktop top bar + mobile bottom tabs
+- `src/components/settings/` — income-types, categories, budget-types (investment badge), asset-classes, class-targets (year stepper + copy-prev-year), investment-items
+- `src/components/nav.tsx` — desktop top bar + mobile 6-tab bottom bar
 - `src/app/globals.css` — Tailwind v4 theme tokens (colors/radius live here as CSS vars)
 
-**Rules of engagement:**
+**Rules of engagement for visual work:** don't touch the lib/ math modules, actions, or schema; mobile-first (bottom nav + FAB ergonomics are sacred; expense entry ≤ 2 taps); keep both themes working; verify with `npm test` + `npm run build`; eyeball on the dev server (mock data — delete `.mock/db.json` to reset).
 
-1. Don't touch `lib/summary.ts`, `lib/dates.ts`, `lib/data.ts`, actions, or the schema for visual work.
-2. Mobile-first: this is a daily phone-entry app. Bottom nav + FAB ergonomics are sacred; expense entry must stay ≤ 2 taps away.
-3. Keep both themes working (Tailwind tokens handle dark mode).
-4. Verify with `npm test` + `npm run build`; eyeball on the dev server (port 888, mock data — delete `.mock/db.json` to reset).
+**Remaining front-end candidates (unprioritized):** charts (income by type, spending trend, class allocation donut), budget bar micro-design, skeleton/loading states, better empty states, month-picker UX, PWA/installability, subtle motion on save/toasts.
 
-**Done so far:** per-budget-type color/envelope identity, tinted dashboard envelope cards, shared Add-Expense dialog.
+## Non-goals (current)
 
-**Candidate improvements (remaining, unprioritized):** typography scale + spacing rhythm beyond stock shadcn, charts for income by type / spending trend, budget bar micro-design (amount ticks, % labels), skeleton/loading states, better empty states, month-picker UX (native `type="month"` is clunky on desktop), settings matrix layout on narrow screens, PWA/installability, subtle motion on save/toasts.
-
-## Non-goals (v1)
-
-- Asset / investment / net-worth tracking (schema must not block adding an `assets` table later)
+- Market-price feeds / unrealized P&L (v2 is realized-only, holdings at cost — manual valuations are the natural v3 step)
 - Multi-currency, multi-user, bank import / OCR receipts
-- Recurring transactions (v2 candidate — salary is predictable)
-- Envelope carryover of unspent monthly budget (v2 candidate)
-
-## Open Question (unchanged)
-
-Allocations are computed **on the fly** from the current matrix. If Ray edits Salary's split in August, past months' dashboards recalculate with the new split. On-the-fly is fine for v1; if historical accuracy starts to matter, add `allocation_snapshot jsonb` to `incomes` later.
+- Recurring transactions (candidate — salary is predictable)
+- Envelope carryover of unspent monthly budget (candidate)
+- FIFO cost basis (average cost only)

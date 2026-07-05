@@ -4,12 +4,16 @@
 import { createClient } from "@/lib/supabase/server";
 import * as mock from "@/lib/mock/api";
 import { isMockMode } from "@/lib/mock/mode";
+import type { SplitCell } from "@/lib/allocation-split";
 import type {
-  BudgetAllocation,
+  AssetClassTarget,
   Config,
   EventRow,
   ExpenseRow,
+  IncomeAllocation,
   IncomeRow,
+  InvestmentConfig,
+  InvestmentTransaction,
 } from "@/lib/types";
 
 function unwrap<T>(result: { data: T | null; error: { message: string } | null }): T {
@@ -17,19 +21,13 @@ function unwrap<T>(result: { data: T | null; error: { message: string } | null }
   return result.data as T;
 }
 
-/** Types, allocations, categories and events — the app's working vocabulary. */
+/** Types, categories and events — the app's working vocabulary. */
 export async function getConfig(): Promise<Config> {
   if (isMockMode()) return mock.getConfig();
   const supabase = await createClient();
-  const [incomeTypes, budgetTypes, allocations, categories, events] = await Promise.all([
-    supabase
-      .from("income_types")
-      .select("id,name,cadence,allocation_mode,is_active")
-      .order("created_at"),
-    supabase.from("budget_types").select("id,name,is_active").order("created_at"),
-    supabase
-      .from("budget_allocations")
-      .select("id,income_type_id,budget_type_id,percent,amount"),
+  const [incomeTypes, budgetTypes, categories, events] = await Promise.all([
+    supabase.from("income_types").select("id,name,cadence,is_active").order("created_at"),
+    supabase.from("budget_types").select("id,name,kind,is_active").order("created_at"),
     supabase
       .from("expense_categories")
       .select("id,name,default_budget_type_id,is_active")
@@ -43,27 +41,9 @@ export async function getConfig(): Promise<Config> {
   return {
     incomeTypes: unwrap(incomeTypes),
     budgetTypes: unwrap(budgetTypes),
-    // numeric comes back as number via PostgREST, but coerce defensively
-    allocations: (unwrap(allocations) as BudgetAllocation[]).map((a) => ({
-      ...a,
-      percent: a.percent === null ? null : Number(a.percent),
-      amount: a.amount === null ? null : Number(a.amount),
-    })),
     categories: unwrap(categories),
     events: unwrap(events) as EventRow[],
   };
-}
-
-export async function getIncomesBetween(start: string, end: string): Promise<IncomeRow[]> {
-  const supabase = await createClient();
-  const result = await supabase
-    .from("incomes")
-    .select("id,name,amount,date,income_type_id,notes")
-    .gte("date", start)
-    .lte("date", end)
-    .order("date", { ascending: false })
-    .order("created_at", { ascending: false });
-  return unwrap(result);
 }
 
 export interface ExpenseFilters {
@@ -118,6 +98,50 @@ export async function getIncomes(filters: IncomeFilters = {}): Promise<IncomeRow
   return unwrap(await query);
 }
 
+/** Stored envelope splits for the given incomes. */
+export async function getIncomeAllocations(incomeIds: string[]): Promise<IncomeAllocation[]> {
+  if (incomeIds.length === 0) return [];
+  if (isMockMode()) return mock.getIncomeAllocations(incomeIds);
+  const supabase = await createClient();
+  const result = await supabase
+    .from("income_allocations")
+    .select("id,income_id,budget_type_id,amount")
+    .in("income_id", incomeIds);
+  return unwrap(result);
+}
+
+/**
+ * Latest income's split per income type — prefill source for the income form
+ * (each new income starts from how you last split that type).
+ */
+export async function getLatestSplitByIncomeType(): Promise<Record<string, SplitCell[]>> {
+  if (isMockMode()) return mock.getLatestSplitByIncomeType();
+  const supabase = await createClient();
+  const incomes = unwrap(
+    await supabase
+      .from("incomes")
+      .select("id,income_type_id")
+      .order("date", { ascending: false })
+      .order("created_at", { ascending: false })
+  ) as { id: string; income_type_id: string }[];
+
+  const latestByType = new Map<string, string>(); // income_type_id → income_id
+  for (const income of incomes) {
+    if (!latestByType.has(income.income_type_id)) {
+      latestByType.set(income.income_type_id, income.id);
+    }
+  }
+  const allocations = await getIncomeAllocations([...latestByType.values()]);
+
+  const result: Record<string, SplitCell[]> = {};
+  for (const [typeId, incomeId] of latestByType) {
+    result[typeId] = allocations
+      .filter((a) => a.income_id === incomeId)
+      .map((a) => ({ budget_type_id: a.budget_type_id, amount: a.amount }));
+  }
+  return result;
+}
+
 export async function getRecentExpenses(limit: number): Promise<ExpenseRow[]> {
   if (isMockMode()) return mock.getRecentExpenses(limit);
   const supabase = await createClient();
@@ -144,4 +168,42 @@ export async function getEventTotals(): Promise<Map<string, number>> {
     totals.set(row.event_id, (totals.get(row.event_id) ?? 0) + row.amount);
   }
   return totals;
+}
+
+/** Asset classes, per-year targets and items. */
+export async function getInvestmentConfig(): Promise<InvestmentConfig> {
+  if (isMockMode()) return mock.getInvestmentConfig();
+  const supabase = await createClient();
+  const [assetClasses, targets, items] = await Promise.all([
+    supabase.from("asset_classes").select("id,name,is_active,sort").order("sort"),
+    supabase.from("asset_class_targets").select("id,asset_class_id,year,percent"),
+    supabase
+      .from("investment_items")
+      .select("id,asset_class_id,name,is_active")
+      .order("created_at"),
+  ]);
+  return {
+    assetClasses: unwrap(assetClasses),
+    // numeric comes back as number via PostgREST, but coerce defensively
+    targets: (unwrap(targets) as AssetClassTarget[]).map((t) => ({
+      ...t,
+      percent: Number(t.percent),
+    })),
+    items: unwrap(items),
+  };
+}
+
+/** ALL transactions, chronological — the investment math folds them in order. */
+export async function getInvestmentTransactions(): Promise<InvestmentTransaction[]> {
+  if (isMockMode()) return mock.getInvestmentTransactions();
+  const supabase = await createClient();
+  const result = await supabase
+    .from("investment_transactions")
+    .select("id,item_id,side,amount,quantity,date,notes")
+    .order("date", { ascending: true })
+    .order("created_at", { ascending: true });
+  return (unwrap(result) as InvestmentTransaction[]).map((t) => ({
+    ...t,
+    quantity: t.quantity === null ? null : Number(t.quantity),
+  }));
 }

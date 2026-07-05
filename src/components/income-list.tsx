@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Pencil, Plus, Search } from "lucide-react";
 import { updateIncome } from "@/lib/actions/entries";
+import { scaleSplit, type SplitCell } from "@/lib/allocation-split";
 import { formatDate, monthLabel } from "@/lib/dates";
-import type { IncomeRow, IncomeType } from "@/lib/types";
+import type { BudgetType, IncomeRow, IncomeType } from "@/lib/types";
 import { IncomeForm } from "@/components/income-form";
 import { InlineAmount, InlineName } from "@/components/inline-edit";
 import { SimpleSelect } from "@/components/simple-select";
@@ -25,6 +26,11 @@ const COLS = "1fr 160px 110px 150px 40px";
 interface IncomeListProps {
   incomes: IncomeRow[];
   incomeTypes: IncomeType[];
+  budgetTypes: BudgetType[];
+  /** Stored envelope split per listed income. */
+  splitByIncome: Record<string, SplitCell[]>;
+  /** Prefill source for the add form. */
+  latestSplitByType: Record<string, SplitCell[]>;
   month: string; // "YYYY-MM" or "all"
   type: string; // income type id or "all"
   q: string;
@@ -39,7 +45,16 @@ function pillClass(active: boolean) {
   );
 }
 
-export function IncomeList({ incomes, incomeTypes, month, type, q }: IncomeListProps) {
+export function IncomeList({
+  incomes,
+  incomeTypes,
+  budgetTypes,
+  splitByIncome,
+  latestSplitByType,
+  month,
+  type,
+  q,
+}: IncomeListProps) {
   const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<IncomeRow | null>(null);
@@ -72,6 +87,15 @@ export function IncomeList({ incomes, incomeTypes, month, type, q }: IncomeListP
     income: IncomeRow,
     patch: Partial<Pick<IncomeRow, "name" | "amount">>
   ): Promise<boolean> {
+    const split = splitByIncome[income.id] ?? [];
+    const nextAmount = patch.amount ?? income.amount;
+    // Inline amount edits re-scale the stored split proportionally so the
+    // hard "split sums to amount" rule keeps holding.
+    const allocations = nextAmount === income.amount ? split : scaleSplit(split, nextAmount);
+    if (allocations.length === 0) {
+      toast.error("Set the envelope split first — use the edit dialog.");
+      return false;
+    }
     const result = await updateIncome(income.id, {
       name: income.name,
       amount: income.amount,
@@ -79,6 +103,7 @@ export function IncomeList({ incomes, incomeTypes, month, type, q }: IncomeListP
       income_type_id: income.income_type_id,
       notes: income.notes,
       ...patch,
+      allocations,
     });
     if (!result.ok) {
       toast.error(result.error);
@@ -217,7 +242,12 @@ export function IncomeList({ incomes, incomeTypes, month, type, q }: IncomeListP
           <DialogHeader>
             <DialogTitle>Add income</DialogTitle>
           </DialogHeader>
-          <IncomeForm incomeTypes={formTypes()} onSaved={() => setAdding(false)} />
+          <IncomeForm
+            incomeTypes={formTypes()}
+            budgetTypes={budgetTypes}
+            latestSplitByType={latestSplitByType}
+            onSaved={() => setAdding(false)}
+          />
         </DialogContent>
       </Dialog>
 
@@ -229,7 +259,10 @@ export function IncomeList({ incomes, incomeTypes, month, type, q }: IncomeListP
           {editing && (
             <IncomeForm
               incomeTypes={formTypes(editing)}
+              budgetTypes={budgetTypes}
+              latestSplitByType={latestSplitByType}
               initial={editing}
+              initialAllocations={splitByIncome[editing.id] ?? []}
               onSaved={() => setEditing(null)}
             />
           )}
