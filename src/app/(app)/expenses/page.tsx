@@ -1,4 +1,4 @@
-import { currentMonthWIB, formatDate, monthRange } from "@/lib/dates";
+import { currentMonthWIB, monthLabel, monthRange } from "@/lib/dates";
 import { getConfig, getExpenses } from "@/lib/data";
 import { formatIDR } from "@/lib/format";
 import { ExpenseFilters } from "@/components/expense-filters";
@@ -42,12 +42,13 @@ export default async function ExpensesPage({
   const total = expenses.reduce((sum, e) => sum + e.amount, 0);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-xl font-semibold">Expenses</h1>
-        <span className="text-sm text-muted-foreground">
-          {expenses.length} entries · <span className="font-medium text-foreground">{formatIDR(total)}</span>
-        </span>
+    <div className="space-y-[18px]">
+      <div className="flex items-baseline justify-between gap-4">
+        <h1 className="text-[28px] font-bold tracking-[-0.02em]">Expenses</h1>
+        <p className="text-[12.5px] text-muted-foreground">
+          {expenses.length} entries · {month === "all" ? "All time" : monthLabel(month)} ·{" "}
+          <span className="font-medium text-foreground tabular-nums">{formatIDR(total)}</span> total
+        </p>
       </div>
 
       <ExpenseFilters
@@ -58,17 +59,15 @@ export default async function ExpensesPage({
         defaultMonth={defaultMonth}
       />
 
-      {range && (
-        <p className="text-xs text-muted-foreground">
-          Budget month: {formatDate(range.start)} – {formatDate(range.end)}
-        </p>
-      )}
-
       <ExpenseList
         expenses={expenses}
         budgetTypes={config.budgetTypes}
         categories={config.categories}
         events={config.events}
+        emptyTitle="Nothing here yet"
+        emptyHint={q || budget !== "all" || category !== "all" || event !== "all"
+          ? "No expenses match these filters."
+          : 'Tap "+ Expense" to add your first one.'}
       />
     </div>
   );

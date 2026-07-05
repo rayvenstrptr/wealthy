@@ -1,4 +1,4 @@
-import { currentMonthWIB, formatDate, monthRange } from "@/lib/dates";
+import { currentMonthWIB, monthLabel, monthRange } from "@/lib/dates";
 import { getConfig, getIncomes } from "@/lib/data";
 import { formatIDR } from "@/lib/format";
 import { IncomeList } from "@/components/income-list";
@@ -35,20 +35,14 @@ export default async function IncomePage({
   const total = incomes.reduce((sum, i) => sum + i.amount, 0);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-xl font-semibold">Income</h1>
-        <span className="text-sm text-muted-foreground">
-          {incomes.length} entries ·{" "}
-          <span className="font-medium text-foreground">{formatIDR(total)}</span>
-        </span>
-      </div>
-
-      {range && (
-        <p className="text-xs text-muted-foreground">
-          Budget month: {formatDate(range.start)} – {formatDate(range.end)}
+    <div className="space-y-[18px]">
+      <div className="flex items-baseline justify-between gap-4">
+        <h1 className="text-[28px] font-bold tracking-[-0.02em]">Income</h1>
+        <p className="text-[12.5px] text-muted-foreground">
+          {month === "all" ? "All time" : monthLabel(month)} ·{" "}
+          <span className="font-medium text-foreground tabular-nums">{formatIDR(total)}</span> total
         </p>
-      )}
+      </div>
 
       <IncomeList
         incomes={incomes}

@@ -5,13 +5,6 @@ import { BudgetTypesCard } from "@/components/settings/budget-types-card";
 import { CategoriesCard } from "@/components/settings/categories-card";
 import { IncomeTypesCard } from "@/components/settings/income-types-card";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 
 export default async function SettingsPage() {
   const [config, allIncomes] = await Promise.all([getConfig(), getIncomes()]);
@@ -28,68 +21,39 @@ export default async function SettingsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Settings</h1>
+    <div className="space-y-4">
+      <h1 className="text-[28px] font-bold tracking-[-0.02em]">Settings</h1>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Income types</CardTitle>
-          <CardDescription>
-            Monthly cadence drives the monthly budget (Salary); yearly types are budgeted on the
-            yearly window.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <IncomeTypesCard incomeTypes={config.incomeTypes} />
-        </CardContent>
-      </Card>
+      <div className="grid gap-4 md:grid-cols-2">
+        <IncomeTypesCard incomeTypes={config.incomeTypes} />
+        <CategoriesCard categories={config.categories} budgetTypes={activeBudgetTypes} />
+      </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Budget types</CardTitle>
-          <CardDescription>The envelopes money is allocated to.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <BudgetTypesCard budgetTypes={config.budgetTypes} />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Budget allocation matrix</CardTitle>
-          <CardDescription>
-            Per income type: how each rupiah received is split across budget types. Amounts are
-            only a convenient way to define percentages — actual allocation is always derived % ×
-            income received.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+      <div className="rounded-[16px] bg-card px-6 py-[22px] shadow-[0_1px_2px_rgba(38,35,30,0.05)]">
+        <div className="text-[15px] font-bold">Budget allocation matrix</div>
+        <p className="mt-0.5 text-[12.5px] text-muted-foreground">
+          Each income type defines its own split. Amounts are just a way to write percentages —
+          actual allocation is always derived % × income received.
+        </p>
+        <div className="mt-4">
           <AllocationMatrix
             incomeTypes={activeIncomeTypes}
             budgetTypes={activeBudgetTypes}
             allocations={config.allocations}
             latestIncomeByType={latestIncomeByType}
           />
-        </CardContent>
-      </Card>
+        </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Expense categories</CardTitle>
-          <CardDescription>
-            What money was spent on. The default budget type prefills the expense form.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <CategoriesCard categories={config.categories} budgetTypes={activeBudgetTypes} />
-        </CardContent>
-      </Card>
-
-      <form action={signOut}>
-        <Button type="submit" variant="outline" className="w-full">
-          Sign out
-        </Button>
-      </form>
+        <div className="mt-4 flex flex-wrap items-center gap-2.5 border-t border-border pt-4">
+          <span className="mr-1 text-[13px] font-bold">Budget types</span>
+          <BudgetTypesCard budgetTypes={config.budgetTypes} />
+          <form action={signOut} className="ml-auto">
+            <Button type="submit" variant="outline" size="sm">
+              Sign out
+            </Button>
+          </form>
+        </div>
+      </div>
     </div>
   );
 }

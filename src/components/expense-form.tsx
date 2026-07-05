@@ -22,9 +22,11 @@ interface ExpenseFormProps {
   initial?: ExpenseRow;
   /** Called after a successful save (and after delete in edit mode). */
   onSaved?: () => void;
+  /** Add mode only: close the dialog ("Done") without saving again. */
+  onDone?: () => void;
 }
 
-export function ExpenseForm({ budgetTypes, categories, events, initial, onSaved }: ExpenseFormProps) {
+export function ExpenseForm({ budgetTypes, categories, events, initial, onSaved, onDone }: ExpenseFormProps) {
   const isEdit = initial !== undefined;
 
   const [name, setName] = useState(initial?.name ?? "");
@@ -201,14 +203,20 @@ export function ExpenseForm({ budgetTypes, categories, events, initial, onSaved 
         />
       </div>
 
-      <div className="flex gap-2 pt-1">
+      <div className="flex gap-2.5 pt-1">
         <Button type="submit" className="flex-1" disabled={busy}>
-          {busy ? "Saving…" : isEdit ? "Save changes" : "Save expense"}
+          {busy ? "Saving…" : isEdit ? "Save changes" : "Save & add another"}
         </Button>
-        {isEdit && (
+        {isEdit ? (
           <Button type="button" variant="destructive" onClick={handleDelete} disabled={busy}>
             Delete
           </Button>
+        ) : (
+          onDone && (
+            <Button type="button" variant="secondary" onClick={onDone} disabled={busy}>
+              Done
+            </Button>
+          )
         )}
       </div>
     </form>

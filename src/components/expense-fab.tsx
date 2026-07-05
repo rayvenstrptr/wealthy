@@ -1,52 +1,25 @@
 "use client";
 
-import { useState } from "react";
 import { Plus } from "lucide-react";
-import type { BudgetType, EventRow, ExpenseCategory } from "@/lib/types";
-import { ExpenseForm } from "@/components/expense-form";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-
-interface ExpenseFabProps {
-  budgetTypes: BudgetType[];
-  categories: ExpenseCategory[];
-  events: EventRow[];
-}
+import { useAddExpense } from "@/components/add-expense-provider";
 
 /**
- * Floating "+ Expense" button, present on every page. The dialog stays open
- * after a save (the form resets keeping the date) so several expenses can be
- * entered back to back.
+ * Floating "+ Expense" button, present on every page. Mobile: a 54px ink circle
+ * above the tab bar. Desktop: an ink pill bottom-right. Opens the shared dialog,
+ * which stays open after save for rapid entry.
  */
-export function ExpenseFab({ budgetTypes, categories, events }: ExpenseFabProps) {
-  const [open, setOpen] = useState(false);
+export function ExpenseFab() {
+  const { open } = useAddExpense();
 
   return (
-    <>
-      <Button
-        size="lg"
-        className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-50 h-13 rounded-full shadow-lg md:bottom-8"
-        onClick={() => setOpen(true)}
-      >
-        <Plus className="size-5" />
-        Expense
-      </Button>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add expense</DialogTitle>
-            <DialogDescription>Saved entries reset the form, keeping the date.</DialogDescription>
-          </DialogHeader>
-          <ExpenseForm budgetTypes={budgetTypes} categories={categories} events={events} />
-        </DialogContent>
-      </Dialog>
-    </>
+    <button
+      type="button"
+      onClick={open}
+      aria-label="Add expense"
+      className="fixed right-4 bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-50 inline-flex size-[54px] items-center justify-center rounded-full bg-primary text-primary-foreground shadow-[0_6px_18px_rgba(38,35,30,0.3)] transition-colors hover:bg-[#3a362e] md:right-8 md:bottom-8 md:size-auto md:gap-1.5 md:px-6 md:py-3 md:text-[14px] md:font-semibold dark:hover:bg-[#e8e3d9]"
+    >
+      <Plus className="size-6 md:size-5" />
+      <span className="hidden md:inline">Expense</span>
+    </button>
   );
 }

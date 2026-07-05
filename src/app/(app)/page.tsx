@@ -8,6 +8,7 @@ import {
   yearRange,
 } from "@/lib/dates";
 import { getConfig, getExpenses, getIncomes } from "@/lib/data";
+import { envelopeHue } from "@/lib/envelope-colors";
 import { formatIDR } from "@/lib/format";
 import {
   computeBudgetPerformance,
@@ -15,17 +16,13 @@ import {
   summarizeExpensesBy,
   summarizeIncomeByType,
 } from "@/lib/summary";
-import { BudgetPerformance } from "@/components/dashboard/budget-performance";
-import { PeriodPicker, type DashboardView } from "@/components/dashboard/period-picker";
-import { Badge } from "@/components/ui/badge";
+import { EnvelopeCard, EnvelopeRow } from "@/components/dashboard/envelope-card";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { cn } from "@/lib/utils";
+  MobilePeriod,
+  PeriodPicker,
+  type DashboardView,
+} from "@/components/dashboard/period-picker";
+import { Badge } from "@/components/ui/badge";
 
 interface SearchParams {
   view?: string;
@@ -54,9 +51,6 @@ export default async function DashboardPage({
 
   const totals = computeTotals(incomes, expenses);
 
-  // Archived types stay in the math so history renders correctly; rows for
-  // archived budget types are shown only if they have activity in the window.
-  // All-time uses the yearly rule: every income type's split applies.
   const performance = computeBudgetPerformance({
     window: view === "monthly" ? "monthly" : "yearly",
     incomeTypes: config.incomeTypes,
@@ -72,172 +66,251 @@ export default async function DashboardPage({
 
   const incomeByType = summarizeIncomeByType(incomes, config.incomeTypes);
   const byCategory = summarizeExpensesBy(expenses, "expense_category_id", config.categories);
-  const recentExpenses = expenses.slice(0, 10);
+  const recentExpenses = expenses.slice(0, view === "monthly" ? 4 : 6);
   const noSalaryThisMonth = view === "monthly" && performance.monthlyCadenceIncomeTotal === 0;
 
+  const budgetNameById = new Map(config.budgetTypes.map((b) => [b.id, b.name]));
+
+  const title =
+    view === "monthly" ? monthLabel(month) : view === "yearly" ? year : "All time";
+  const caption = range
+    ? `${formatDate(range.start)} – ${formatDate(range.end)} · budget ${view === "monthly" ? "month" : "year"}`
+    : "Everything ever recorded";
+  const envelopeHint =
+    view === "monthly"
+      ? "Salary-based budget"
+      : view === "yearly"
+        ? `All income received in ${year} × each type's split`
+        : "All income ever received × each type's split";
+
+  const warnings = performance.unallocatedIncomeTypeNames;
+
   return (
-    <div className="space-y-4">
-      <PeriodPicker view={view} month={month} year={year} />
+    <div className="pb-4">
+      {/* ============ MOBILE ============ */}
+      <div className="md:hidden">
+        <MobilePeriod view={view} month={month} year={year} />
 
-      <p className="text-xs text-muted-foreground">
-        {range
-          ? `Budget ${view === "monthly" ? "month" : "year"}: ${formatDate(range.start)} – ${formatDate(range.end)}`
-          : "Everything ever recorded"}
-      </p>
+        {warnings.length > 0 && <WarningChips names={warnings} className="mt-4" />}
 
-      {performance.unallocatedIncomeTypeNames.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {performance.unallocatedIncomeTypeNames.map((name) => (
-            <Badge
-              key={name}
-              variant="outline"
-              className="border-amber-400 text-amber-700 dark:text-amber-400"
-            >
-              ⚠ {name} has no budget split configured
-            </Badge>
+        {/* Ink hero replaces the stat trio on mobile */}
+        <div className="mt-[18px] rounded-[16px] bg-primary px-5 py-[18px] text-primary-foreground">
+          <div className="text-[11.5px] font-medium text-on-ink">
+            {view === "monthly" ? "Net this month" : "Net"}
+          </div>
+          <div
+            className="mt-1 text-[26px] font-bold tracking-[-0.01em] tabular-nums"
+            style={totals.net < 0 ? { color: "oklch(0.72 0.15 25)" } : undefined}
+          >
+            {netLabel(totals.net)}
+          </div>
+          <div className="mt-3 flex gap-[18px] text-[11.5px] text-on-ink">
+            <span>
+              In <b className="font-semibold text-primary-foreground tabular-nums">{formatIDR(totals.income)}</b>
+            </span>
+            <span>
+              Out <b className="font-semibold text-primary-foreground tabular-nums">{formatIDR(totals.expenses)}</b>
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-[22px] text-[14px] font-bold">Envelopes</div>
+        {noSalaryThisMonth && <NoSalaryNote className="mt-2.5" />}
+        <div className="mt-2.5 flex flex-col gap-[9px]">
+          {performanceRows.map((row) => (
+            <EnvelopeRow key={row.budget_type_id} row={row} />
           ))}
         </div>
-      )}
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-3 gap-2 md:gap-4">
-        <StatCard label="Total Income" value={totals.income} tone="income" />
-        <StatCard label="Total Expenses" value={totals.expenses} tone="expense" />
-        <StatCard label="Net" value={totals.net} tone={totals.net >= 0 ? "income" : "expense"} />
+        {view === "monthly" && (
+          <>
+            <div className="mt-[22px] flex items-baseline justify-between">
+              <span className="text-[14px] font-bold">Recent expenses</span>
+              <Link href="/expenses" className="text-[11.5px] text-muted-foreground">
+                View all →
+              </Link>
+            </div>
+            <div className="mt-2.5 overflow-hidden rounded-[14px] bg-card shadow-[0_1px_2px_rgba(38,35,30,0.05)]">
+              {recentExpenses.length === 0 ? (
+                <p className="p-4 text-[13px] text-muted-foreground">Nothing yet.</p>
+              ) : (
+                recentExpenses.map((expense, i) => (
+                  <div
+                    key={expense.id}
+                    className="grid grid-cols-[auto_1fr_auto] items-center gap-2.5 px-4 py-3 text-[13px]"
+                    style={
+                      i < recentExpenses.length - 1
+                        ? { borderBottom: "1px solid var(--border)" }
+                        : undefined
+                    }
+                  >
+                    <Dot name={budgetNameById.get(expense.budget_type_id)} size={7} />
+                    <span className="truncate">{expense.name}</span>
+                    <span className="font-semibold tabular-nums">{formatIDR(expense.amount)}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Budget performance */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Budget performance</CardTitle>
-          <CardDescription>
-            {view === "monthly"
-              ? `Salary-based budget for ${monthLabel(month)}`
-              : view === "yearly"
-                ? `All income received in ${year} × each type's split`
-                : "All income ever received × each type's split"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {noSalaryThisMonth && (
-            <p className="mb-3 rounded-md bg-muted px-2.5 py-1.5 text-xs text-muted-foreground">
-              No monthly-cadence income (Salary) recorded this month — allocated amounts are 0.
-            </p>
-          )}
-          <BudgetPerformance rows={performanceRows} />
-        </CardContent>
-      </Card>
-
-      {/* Income by type */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Income by type</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {incomeByType.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No income recorded in this period.</p>
-          ) : view !== "monthly" ? (
-            <div className="space-y-4">
-              <IncomeGroup
-                label="Monthly cadence"
-                rows={incomeByType.filter((r) => r.cadence === "monthly")}
-              />
-              <IncomeGroup
-                label="Yearly cadence"
-                rows={incomeByType.filter((r) => r.cadence === "yearly")}
-              />
-            </div>
-          ) : (
-            <IncomeGroup rows={incomeByType} />
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Expenses by category — collapsed / less prominent */}
-      <details className="rounded-xl border">
-        <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-          Expenses by category
-          <span className="ml-2 text-xs font-normal text-muted-foreground">
-            ({byCategory.length} categories)
-          </span>
-        </summary>
-        <div className="border-t px-4 py-3">
-          {byCategory.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No expenses in this period.</p>
-          ) : (
-            <ul className="space-y-1.5">
-              {byCategory.map((row) => (
-                <li key={row.id} className="flex items-center justify-between text-sm">
-                  <span>{row.name}</span>
-                  <span className="tabular-nums">{formatIDR(row.total)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+      {/* ============ DESKTOP ============ */}
+      <div className="hidden md:block">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-[28px] font-bold tracking-[-0.02em]">{title}</h1>
+            <p className="mt-1 text-[12.5px] text-muted-foreground">{caption}</p>
+          </div>
+          <PeriodPicker view={view} month={month} year={year} />
         </div>
-      </details>
 
-      {/* Recent expenses — monthly view only */}
-      {view === "monthly" && (
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>Recent expenses</CardTitle>
-            <Link href="/expenses" className="text-xs text-muted-foreground hover:text-foreground">
-              View all →
-            </Link>
-          </CardHeader>
-          <CardContent>
-            {recentExpenses.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Nothing yet — tap “+ Expense” to add your first one.
-              </p>
-            ) : (
-              <ul className="space-y-2">
-                {recentExpenses.map((expense) => (
-                  <li key={expense.id} className="flex items-center justify-between gap-2 text-sm">
-                    <div className="min-w-0">
+        {warnings.length > 0 && <WarningChips names={warnings} className="mt-6" />}
+
+        {/* Stat trio */}
+        <div className="mt-6 grid grid-cols-3 gap-3.5">
+          <StatCard label="Total income" value={totals.income} />
+          <StatCard label="Total expenses" value={totals.expenses} />
+          <div className="rounded-[16px] bg-primary px-[22px] py-5 text-primary-foreground">
+            <div className="text-[12px] font-medium text-on-ink">Net</div>
+            <div
+              className="mt-1.5 text-[24px] font-bold tracking-[-0.01em] tabular-nums"
+              style={totals.net < 0 ? { color: "oklch(0.72 0.15 25)" } : undefined}
+            >
+              {netLabel(totals.net)}
+            </div>
+          </div>
+        </div>
+
+        {/* Envelopes */}
+        <div className="mt-[30px] flex items-baseline justify-between">
+          <div className="text-[16px] font-bold">Envelopes</div>
+          <div className="text-[12.5px] text-muted-foreground">{envelopeHint}</div>
+        </div>
+        {noSalaryThisMonth && <NoSalaryNote className="mt-3.5" />}
+        <div className="mt-3.5 grid grid-cols-5 gap-3.5">
+          {performanceRows.map((row) => (
+            <EnvelopeCard key={row.budget_type_id} row={row} />
+          ))}
+        </div>
+
+        {/* Lower grid */}
+        <div
+          className="mt-6 grid gap-3.5"
+          style={{ gridTemplateColumns: view === "monthly" ? "1.4fr 1fr" : "1fr 1fr" }}
+        >
+          {view === "monthly" ? (
+            <Panel>
+              <PanelHead title="Recent expenses" hint={<Link href="/expenses" className="text-[12.5px] text-muted-foreground hover:text-foreground">View all →</Link>} />
+              {recentExpenses.length === 0 ? (
+                <EmptyLine />
+              ) : (
+                <div className="mt-2">
+                  {recentExpenses.map((expense, i) => (
+                    <div
+                      key={expense.id}
+                      className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-3 py-2.5 text-[13.5px]"
+                      style={
+                        i < recentExpenses.length - 1
+                          ? { borderBottom: "1px solid var(--border)" }
+                          : undefined
+                      }
+                    >
+                      <Dot name={budgetNameById.get(expense.budget_type_id)} size={8} />
                       <span className="truncate">{expense.name}</span>
-                      <span className="ml-2 text-xs text-muted-foreground">
+                      <span className="text-[11.5px] text-muted-foreground">
                         {formatDate(expense.date)}
                       </span>
+                      <span className="min-w-[100px] text-right font-semibold tabular-nums">
+                        {formatIDR(expense.amount)}
+                      </span>
                     </div>
-                    <span className="shrink-0 tabular-nums">{formatIDR(expense.amount)}</span>
-                  </li>
+                  ))}
+                </div>
+              )}
+            </Panel>
+          ) : (
+            <Panel>
+              <div className="text-[15px] font-bold">Income by type</div>
+              {incomeByType.length === 0 ? (
+                <EmptyLine />
+              ) : (
+                <div className="mt-2 space-y-3.5">
+                  <IncomeGroup label="Monthly cadence" rows={incomeByType.filter((r) => r.cadence === "monthly")} />
+                  <IncomeGroup label="Yearly cadence" rows={incomeByType.filter((r) => r.cadence === "yearly")} />
+                </div>
+              )}
+            </Panel>
+          )}
+
+          <Panel>
+            <PanelHead
+              title="Expenses by category"
+              hint={
+                <span className="text-[12.5px] text-muted-foreground">
+                  {byCategory.length > 6 ? `top 6 of ${byCategory.length}` : `${byCategory.length} categories`}
+                </span>
+              }
+            />
+            {byCategory.length === 0 ? (
+              <EmptyLine />
+            ) : (
+              <div className="mt-2">
+                {byCategory.slice(0, 6).map((row, i, shown) => (
+                  <MoneyRow key={row.id} label={row.name} value={row.total} last={i === shown.length - 1} />
                 ))}
-              </ul>
+              </div>
             )}
-          </CardContent>
-        </Card>
-      )}
+          </Panel>
+        </div>
+      </div>
     </div>
   );
 }
 
-function StatCard({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone: "income" | "expense";
-}) {
+/* ----------------------------- helpers ----------------------------- */
+
+function netLabel(net: number): string {
+  return net >= 0 ? `+ ${formatIDR(net)}` : formatIDR(net);
+}
+
+function StatCard({ label, value }: { label: string; value: number }) {
   return (
-    <Card className="gap-1 py-4">
-      <CardHeader className="px-3 md:px-4">
-        <CardDescription className="text-xs">{label}</CardDescription>
-      </CardHeader>
-      <CardContent className="px-3 md:px-4">
-        <p
-          className={cn(
-            "text-sm font-semibold tabular-nums md:text-lg",
-            tone === "income" ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"
-          )}
-        >
-          {formatIDR(value)}
-        </p>
-      </CardContent>
-    </Card>
+    <div className="rounded-[16px] bg-card px-[22px] py-5 shadow-[0_1px_2px_rgba(38,35,30,0.05)]">
+      <div className="text-[12px] font-medium text-muted-foreground">{label}</div>
+      <div className="mt-1.5 text-[24px] font-bold tracking-[-0.01em] tabular-nums">
+        {formatIDR(value)}
+      </div>
+    </div>
+  );
+}
+
+function Panel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-[16px] bg-card px-[22px] py-5 shadow-[0_1px_2px_rgba(38,35,30,0.05)]">
+      {children}
+    </div>
+  );
+}
+
+function PanelHead({ title, hint }: { title: string; hint?: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between">
+      <span className="text-[15px] font-bold">{title}</span>
+      {hint}
+    </div>
+  );
+}
+
+function MoneyRow({ label, value, last }: { label: string; value: number; last?: boolean }) {
+  return (
+    <div
+      className="flex justify-between py-[9px] text-[13.5px]"
+      style={last ? undefined : { borderBottom: "1px solid var(--border)" }}
+    >
+      <span>{label}</span>
+      <span className="font-semibold tabular-nums">{formatIDR(value)}</span>
+    </div>
   );
 }
 
@@ -245,30 +318,55 @@ function IncomeGroup({
   label,
   rows,
 }: {
-  label?: string;
+  label: string;
   rows: { income_type_id: string; name: string; total: number }[];
 }) {
-  if (rows.length === 0) {
-    return label ? (
-      <div>
-        <p className="mb-1 text-xs font-medium text-muted-foreground uppercase">{label}</p>
-        <p className="text-sm text-muted-foreground">None.</p>
-      </div>
-    ) : null;
-  }
+  if (rows.length === 0) return null;
   return (
     <div>
-      {label && (
-        <p className="mb-1.5 text-xs font-medium text-muted-foreground uppercase">{label}</p>
-      )}
-      <ul className="space-y-1.5">
-        {rows.map((row) => (
-          <li key={row.income_type_id} className="flex items-center justify-between text-sm">
-            <span>{row.name}</span>
-            <span className="tabular-nums">{formatIDR(row.total)}</span>
-          </li>
+      <div className="text-[11px] font-semibold tracking-[0.1em] text-muted-foreground uppercase">
+        {label}
+      </div>
+      <div className="mt-1">
+        {rows.map((row, i) => (
+          <MoneyRow key={row.income_type_id} label={row.name} value={row.total} last={i === rows.length - 1} />
         ))}
-      </ul>
+      </div>
     </div>
   );
+}
+
+function Dot({ name, size }: { name: string | undefined; size: number }) {
+  return (
+    <span
+      className="inline-block rounded-full"
+      style={{ width: size, height: size, background: envelopeHue(name).fill }}
+    />
+  );
+}
+
+function WarningChips({ names, className }: { names: string[]; className?: string }) {
+  return (
+    <div className={`flex flex-wrap gap-1.5 ${className ?? ""}`}>
+      {names.map((name) => (
+        <Badge key={name} variant="warning">
+          ⚠ {name} has no budget split configured
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
+function NoSalaryNote({ className }: { className?: string }) {
+  return (
+    <div
+      className={`rounded-[14px] border border-dashed border-input bg-sunken px-4 py-3 text-[12.5px] text-muted-foreground ${className ?? ""}`}
+    >
+      No monthly-cadence income (Salary) recorded this month — allocations are Rp 0.
+    </div>
+  );
+}
+
+function EmptyLine() {
+  return <p className="mt-2 text-[13px] text-muted-foreground">Nothing in this period.</p>;
 }

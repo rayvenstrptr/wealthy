@@ -2,13 +2,14 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { Archive } from "lucide-react";
+import { Archive, Plus } from "lucide-react";
 import { createExpenseCategory, updateExpenseCategory } from "@/lib/actions/settings";
+import { envelopeHue } from "@/lib/envelope-colors";
 import type { BudgetType, ExpenseCategory } from "@/lib/types";
 import { SimpleSelect } from "@/components/simple-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArchivedRow } from "./income-types-card";
+import { ArchivedRow, SettingsCard } from "./income-types-card";
 
 const NO_DEFAULT = "none";
 
@@ -24,7 +25,9 @@ export function CategoriesCard({ categories, budgetTypes }: CategoriesCardProps)
     { value: NO_DEFAULT, label: "No default" },
     ...budgetTypes.map((b) => ({ value: b.id, label: b.name })),
   ];
+  const budgetNameById = new Map(budgetTypes.map((b) => [b.id, b.name]));
 
+  const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDefault, setNewDefault] = useState<string>(NO_DEFAULT);
   const [busy, setBusy] = useState(false);
@@ -42,44 +45,70 @@ export function CategoriesCard({ categories, budgetTypes }: CategoriesCardProps)
       toast.success("Category added");
       setNewName("");
       setNewDefault(NO_DEFAULT);
+      setAdding(false);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="space-y-3">
-      <form onSubmit={handleAdd} className="flex gap-2">
-        <Input
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder="New category"
-          autoComplete="off"
-          className="flex-1"
-        />
-        <SimpleSelect
-          value={newDefault}
-          onChange={setNewDefault}
-          options={budgetOptions}
-          className="w-36"
-        />
-        <Button type="submit" disabled={busy}>
+    <SettingsCard
+      title="Expense categories"
+      action={
+        <Button size="sm" variant="secondary" onClick={() => setAdding((v) => !v)}>
+          <Plus className="size-4" />
           Add
         </Button>
-      </form>
+      }
+    >
+      {adding && (
+        <form onSubmit={handleAdd} className="mb-3 flex items-center gap-2">
+          <Input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="New category"
+            autoComplete="off"
+            className="h-9 flex-1"
+            autoFocus
+          />
+          <SimpleSelect
+            value={newDefault}
+            onChange={setNewDefault}
+            options={budgetOptions}
+            className="h-9 w-36"
+          />
+          <Button type="submit" size="sm" disabled={busy}>
+            Add
+          </Button>
+        </form>
+      )}
 
-      <div className="space-y-2">
-        {active.map((category) => (
-          <CategoryRow key={category.id} category={category} budgetOptions={budgetOptions} />
+      <div>
+        {active.map((category, i) => (
+          <CategoryRow
+            key={category.id}
+            category={category}
+            budgetOptions={budgetOptions}
+            budgetName={
+              category.default_budget_type_id
+                ? budgetNameById.get(category.default_budget_type_id)
+                : undefined
+            }
+            last={i === active.length - 1}
+          />
         ))}
       </div>
 
+      <p className="mt-2.5 text-[11.5px] text-muted-foreground">
+        Chip = default budget type, prefills the expense form.
+      </p>
+
       {archived.length > 0 && (
-        <details className="text-sm">
+        <details className="mt-2 text-[13px]">
           <summary className="cursor-pointer text-muted-foreground">
             Archived ({archived.length})
           </summary>
-          <div className="mt-2 space-y-2">
+          <div className="mt-2 space-y-1">
             {archived.map((category) => (
               <ArchivedRow
                 key={category.id}
@@ -90,16 +119,20 @@ export function CategoriesCard({ categories, budgetTypes }: CategoriesCardProps)
           </div>
         </details>
       )}
-    </div>
+    </SettingsCard>
   );
 }
 
 function CategoryRow({
   category,
   budgetOptions,
+  budgetName,
+  last,
 }: {
   category: ExpenseCategory;
   budgetOptions: { value: string; label: string }[];
+  budgetName: string | undefined;
+  last: boolean;
 }) {
   const [name, setName] = useState(category.name);
   const [defaultBudget, setDefaultBudget] = useState(
@@ -108,6 +141,7 @@ function CategoryRow({
   const [busy, setBusy] = useState(false);
   const dirty =
     name !== category.name || defaultBudget !== (category.default_budget_type_id ?? NO_DEFAULT);
+  const hue = envelopeHue(budgetName);
 
   async function handleSave() {
     setBusy(true);
@@ -136,22 +170,34 @@ function CategoryRow({
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <Input value={name} onChange={(e) => setName(e.target.value)} className="flex-1" />
+    <div
+      className="flex items-center gap-2.5 py-2.5"
+      style={last ? undefined : { borderBottom: "1px solid var(--border)" }}
+    >
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        className="min-w-0 flex-1 rounded-[4px] border-b border-dashed border-transparent bg-transparent px-1 py-0.5 text-[13.5px] outline-none transition-colors hover:border-placeholder focus:border-solid focus:border-foreground"
+        aria-label={`Rename ${category.name}`}
+      />
+      {budgetName && (
+        <span className="size-[7px] shrink-0 rounded-full" style={{ background: hue.fill }} />
+      )}
       <SimpleSelect
         value={defaultBudget}
         onChange={setDefaultBudget}
         options={budgetOptions}
-        className="w-36"
+        className="h-8 w-32 shrink-0"
       />
       {dirty && (
-        <Button size="sm" onClick={handleSave} disabled={busy}>
+        <Button size="xs" onClick={handleSave} disabled={busy}>
           Save
         </Button>
       )}
       <Button
-        size="icon"
+        size="icon-sm"
         variant="ghost"
+        className="text-placeholder hover:text-foreground"
         onClick={handleArchive}
         disabled={busy}
         aria-label={`Archive ${category.name}`}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { cloneElement, isValidElement, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Pencil, Plus } from "lucide-react";
 import type { EventRow } from "@/lib/types";
@@ -13,17 +13,26 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-export function NewEventButton() {
+export function NewEventButton({ render }: { render?: React.ReactElement }) {
   const [open, setOpen] = useState(false);
 
-  return (
-    <>
+  const trigger =
+    render && isValidElement(render) ? (
+      cloneElement(render as React.ReactElement<{ onClick?: () => void }>, {
+        onClick: () => setOpen(true),
+      })
+    ) : (
       <Button size="sm" onClick={() => setOpen(true)}>
         <Plus className="size-4" />
         Event
       </Button>
+    );
+
+  return (
+    <>
+      {trigger}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-[440px]">
           <DialogHeader>
             <DialogTitle>New event</DialogTitle>
           </DialogHeader>
@@ -40,12 +49,17 @@ export function EditEventButton({ event }: { event: EventRow }) {
 
   return (
     <>
-      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+      <Button
+        size="icon"
+        variant="secondary"
+        className="shrink-0"
+        onClick={() => setOpen(true)}
+        aria-label="Edit event"
+      >
         <Pencil className="size-4" />
-        Edit
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-[440px]">
           <DialogHeader>
             <DialogTitle>Edit event</DialogTitle>
           </DialogHeader>

@@ -30,15 +30,23 @@ const Toaster = ({ ...props }: ToasterProps) => {
       }}
       style={
         {
-          "--normal-bg": "var(--popover)",
-          "--normal-text": "var(--popover-foreground)",
-          "--normal-border": "var(--border)",
-          "--border-radius": "var(--radius)",
+          // Toasts are the ink card: dark surface, paper text, status color in the icon.
+          "--normal-bg": "var(--primary)",
+          "--normal-text": "var(--primary-foreground)",
+          "--normal-border": "transparent",
+          "--border-radius": "14px",
+          "--success-bg": "var(--primary)",
+          "--success-text": "var(--primary-foreground)",
+          "--success-border": "transparent",
+          "--error-bg": "var(--primary)",
+          "--error-text": "var(--primary-foreground)",
+          "--error-border": "transparent",
         } as React.CSSProperties
       }
       toastOptions={{
         classNames: {
-          toast: "cn-toast",
+          toast:
+            "cn-toast !shadow-[0_8px_24px_rgba(38,35,30,0.2)] [&_[data-icon]]:!text-primary-foreground [&_[data-description]]:!text-on-ink",
         },
       }}
       {...props}

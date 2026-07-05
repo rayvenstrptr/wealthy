@@ -9,41 +9,58 @@ export default async function EventsPage() {
   const [config, totals] = await Promise.all([getConfig(), getEventTotals()]);
 
   return (
-    <div className="space-y-4">
+    <div className="mx-auto max-w-[620px] space-y-[18px]">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Events</h1>
+        <div>
+          <h1 className="text-[28px] font-bold tracking-[-0.02em]">Events</h1>
+          <p className="mt-1 text-[12.5px] text-muted-foreground">
+            Cross-month spending buckets — trips, celebrations, projects.
+          </p>
+        </div>
         <NewEventButton />
       </div>
 
       {config.events.length === 0 ? (
-        <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-          No events yet. Events group expenses across months — trips, celebrations, projects.
-        </p>
+        <div className="rounded-[14px] border border-dashed border-input bg-card px-6 py-8 text-center">
+          <div className="text-[13.5px] font-semibold">No events yet</div>
+          <div className="mt-1 text-[12.5px] text-muted-foreground">
+            Events group expenses across months — trips, celebrations, projects.
+          </div>
+        </div>
       ) : (
-        <ul className="divide-y rounded-lg border">
+        <div className="flex flex-col gap-3">
           {config.events.map((event) => (
-            <li key={event.id}>
-              <Link
-                href={`/events/${event.id}`}
-                className="flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-accent/50"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{event.name}</div>
-                  {(event.starts_on || event.ends_on) && (
-                    <div className="mt-0.5 text-xs text-muted-foreground">
-                      {event.starts_on ? formatDate(event.starts_on) : "…"} –{" "}
-                      {event.ends_on ? formatDate(event.ends_on) : "…"}
-                    </div>
-                  )}
-                </div>
-                <span className="shrink-0 text-sm font-medium tabular-nums">
+            <Link
+              key={event.id}
+              href={`/events/${event.id}`}
+              className="flex items-center justify-between gap-4 rounded-[16px] bg-card px-[22px] py-[18px] shadow-[0_1px_2px_rgba(38,35,30,0.05)] transition-shadow hover:shadow-[0_3px_8px_rgba(38,35,30,0.1)]"
+            >
+              <div className="min-w-0">
+                <div className="truncate text-[14.5px] font-bold">{event.name}</div>
+                {(event.starts_on || event.ends_on) && (
+                  <div className="mt-0.5 text-[12px] text-muted-foreground">
+                    {event.starts_on ? formatDate(event.starts_on) : "…"} –{" "}
+                    {event.ends_on ? formatDate(event.ends_on) : "…"}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-3.5">
+                <span className="text-[15px] font-bold tabular-nums">
                   {formatIDR(totals.get(event.id) ?? 0)}
                 </span>
-                <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-              </Link>
-            </li>
+                <ChevronRight className="size-4 shrink-0 text-placeholder" />
+              </div>
+            </Link>
           ))}
-        </ul>
+
+          <NewEventButton
+            render={
+              <button className="rounded-[16px] border border-dashed border-input bg-transparent px-[22px] py-3.5 text-center text-[13px] text-muted-foreground transition-colors hover:bg-card">
+                + New event
+              </button>
+            }
+          />
+        </div>
       )}
     </div>
   );

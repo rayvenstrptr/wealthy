@@ -5,9 +5,9 @@ Personal finance tracker for a single user (Ray). Tracks income and expenses aga
 Currency: **IDR only**. No decimals. Display format: `Rp 1.250.000`. Common shorthand in this doc: `jt` = juta = million.
 Timezone: Asia/Jakarta (WIB).
 
-## Implementation status (v1 BUILT — next phase: front-end improvement)
+## Implementation status (v1 BUILT — front-end improvement IN PROGRESS)
 
-All build phases below are **done and verified** (unit tests + production build + live smoke test). What remains is polish: the next work session should focus on **front-end improvement** — see the last section for the map and rules of engagement.
+All functional build phases are **done and verified** (unit tests + production build + live smoke test). The **front-end improvement** phase is now **underway** (uncommitted on top of the `Personal wealth dashboard v1` commit): a visual "Envelope" identity has landed — per-budget-type color system in `src/lib/envelope-colors.ts`, tinted `EnvelopeCard`s on the dashboard, and a shared Add-Expense dialog. See the last section for the map and rules of engagement; keep going from here rather than restarting.
 
 Key implementation decisions already made (do not relitigate without reason):
 
@@ -116,7 +116,7 @@ Seed data (defaults on first run): income types Salary(monthly)/Yield/Bonus/Angp
 /login       Only reachable when Supabase is configured
 ```
 
-Mobile-first. Floating "+ Expense" button on every page; its dialog stays open after save for rapid entry.
+Mobile-first. A single "+ Expense" dialog is owned by `AddExpenseProvider` in `src/app/(app)/layout.tsx` and opened via the `useAddExpense()` context from both the floating FAB (`expense-fab.tsx`) and the desktop nav button (`nav.tsx`). The dialog stays open after save (form resets keeping the date) for rapid back-to-back entry.
 
 ## Conventions
 
@@ -126,12 +126,14 @@ Mobile-first. Floating "+ Expense" button on every page; its dialog stays open a
 
 ## Front-end improvement — next phase
 
-The functionality is complete; the UI is functional-but-plain shadcn defaults. When improving the front end:
+Functionality is complete; the visual pass is in progress (Envelope identity landed). When continuing the front end:
 
 **File map (UI only):**
 
-- `src/app/(app)/page.tsx` — dashboard (stat cards, budget bars, income/category sections)
-- `src/components/dashboard/` — `period-picker`, `budget-performance`
+- `src/app/(app)/page.tsx` — dashboard (stat cards, envelope cards, income/category sections)
+- `src/components/dashboard/` — `period-picker`, `budget-performance`, `envelope-card` (tinted per-type card)
+- `src/lib/envelope-colors.ts` — `envelopeHue(name)` → per-budget-type colors (oklch fill/tint/text/track; gold=Invest, green=Cash, red=Life, purple=Fun, blue=Giving; warm-neutral fallback). **Pure presentation, no data logic.**
+- `src/components/add-expense-provider.tsx` — owns the shared Add-Expense dialog; `useAddExpense()` opens it
 - `src/components/expense-*` / `income-*` / `event-*` — lists, forms, filters, FAB
 - `src/components/inline-edit.tsx`, `amount-input.tsx`, `simple-select.tsx` — shared field primitives
 - `src/components/settings/` — cards + `allocation-matrix` (the most complex UI)
@@ -145,7 +147,9 @@ The functionality is complete; the UI is functional-but-plain shadcn defaults. W
 3. Keep both themes working (Tailwind tokens handle dark mode).
 4. Verify with `npm test` + `npm run build`; eyeball on the dev server (port 888, mock data — delete `.mock/db.json` to reset).
 
-**Candidate improvements (unprioritized):** visual identity beyond stock shadcn (typography scale, spacing, color for budget types), charts for income by type / spending trend, budget bar micro-design (amount ticks, % labels), skeleton/loading states, better empty states, month-picker UX (native `type="month"` is clunky on desktop), settings matrix layout on narrow screens, PWA/installability, subtle motion on save/toasts.
+**Done so far:** per-budget-type color/envelope identity, tinted dashboard envelope cards, shared Add-Expense dialog.
+
+**Candidate improvements (remaining, unprioritized):** typography scale + spacing rhythm beyond stock shadcn, charts for income by type / spending trend, budget bar micro-design (amount ticks, % labels), skeleton/loading states, better empty states, month-picker UX (native `type="month"` is clunky on desktop), settings matrix layout on narrow screens, PWA/installability, subtle motion on save/toasts.
 
 ## Non-goals (v1)
 

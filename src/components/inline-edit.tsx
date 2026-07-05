@@ -8,9 +8,11 @@ import { useState } from "react";
 import { formatNumber, parseAmountInput } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+// Dashed underline is the "editable in place" affordance; focus firms it to a
+// solid ink underline. Enter saves (blur), Esc reverts.
 const baseClass =
-  "rounded-md border border-transparent bg-transparent px-1.5 py-0.5 outline-none transition-colors " +
-  "hover:border-input focus:border-ring focus:bg-background focus:ring-2 focus:ring-ring/30";
+  "rounded-[4px] border-b border-dashed border-transparent bg-transparent px-1 py-0.5 outline-none transition-colors " +
+  "hover:border-placeholder focus:border-solid focus:border-foreground";
 
 function keyHandler(revert: () => void) {
   return (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -67,10 +69,12 @@ interface InlineAmountProps {
   value: number;
   onSave: (value: number) => Promise<boolean>;
   className?: string;
+  /** Show a "Rp " prefix (id-ID money). Parsing strips it, so it round-trips. */
+  currency?: boolean;
   "aria-label"?: string;
 }
 
-export function InlineAmount({ value, onSave, className, ...props }: InlineAmountProps) {
+export function InlineAmount({ value, onSave, className, currency, ...props }: InlineAmountProps) {
   const [draft, setDraft] = useState<number | null>(value);
   const [reverting, setReverting] = useState(false);
 
@@ -87,10 +91,12 @@ export function InlineAmount({ value, onSave, className, ...props }: InlineAmoun
     if (!ok) setDraft(value);
   }
 
+  const display = draft == null ? "" : currency ? `Rp ${formatNumber(draft)}` : formatNumber(draft);
+
   return (
     <input
       inputMode="numeric"
-      value={draft == null ? "" : formatNumber(draft)}
+      value={display}
       onChange={(e) => setDraft(parseAmountInput(e.target.value))}
       onBlur={commit}
       onKeyDown={keyHandler(() => {

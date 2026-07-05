@@ -3,12 +3,14 @@
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { saveAllocationRow } from "@/lib/actions/settings";
+import { envelopeHue } from "@/lib/envelope-colors";
 import { formatIDR, formatPercent } from "@/lib/format";
 import { deriveRowPercents, percentRowSum } from "@/lib/summary";
 import type { AllocationMode, BudgetAllocation, BudgetType, IncomeType } from "@/lib/types";
 import { AmountInput } from "@/components/amount-input";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 interface AllocationMatrixProps {
   incomeTypes: IncomeType[];
@@ -19,9 +21,9 @@ interface AllocationMatrixProps {
 }
 
 /**
- * The allocation matrix: rows = income types, columns = budget types.
- * Each row picks percent or amount entry mode; amounts are only a convenient
- * way to define percentages (derived % shown live).
+ * The allocation matrix: rows = income types, columns = budget types. Each row
+ * picks percent or amount entry mode; amounts are only a convenient way to
+ * define percentages (derived % shown live).
  */
 export function AllocationMatrix({
   incomeTypes,
@@ -31,14 +33,14 @@ export function AllocationMatrix({
 }: AllocationMatrixProps) {
   if (incomeTypes.length === 0 || budgetTypes.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
+      <p className="text-[13px] text-muted-foreground">
         Add at least one income type and one budget type to configure allocations.
       </p>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       {incomeTypes.map((incomeType) => (
         <MatrixRow
           key={incomeType.id}
@@ -61,6 +63,21 @@ function initValues(
     values[cell.budget_type_id] = mode === "percent" ? cell.percent : cell.amount;
   }
   return values;
+}
+
+/** Small segmented pill for the %/Rp entry-mode toggle. */
+function CadencePill({ cadence }: { cadence: string }) {
+  const monthly = cadence === "monthly";
+  return (
+    <span
+      className={cn(
+        "rounded-full px-2.5 py-0.5 text-[11px] font-semibold",
+        monthly ? "bg-secondary text-foreground" : "border border-input text-muted-foreground"
+      )}
+    >
+      {cadence}
+    </span>
+  );
 }
 
 function MatrixRow({
@@ -115,9 +132,7 @@ function MatrixRow({
     mode === "percent" && percentSum !== null && Math.abs(percentSum - 100) > 0.01;
 
   const amountTotal =
-    mode === "amount"
-      ? budgetTypes.reduce((sum, bt) => sum + (values[bt.id] ?? 0), 0)
-      : null;
+    mode === "amount" ? budgetTypes.reduce((sum, bt) => sum + (values[bt.id] ?? 0), 0) : null;
   const showAmountWarning =
     mode === "amount" &&
     amountTotal !== null &&
@@ -131,10 +146,7 @@ function MatrixRow({
       const result = await saveAllocationRow({
         incomeTypeId: incomeType.id,
         mode,
-        cells: budgetTypes.map((bt) => ({
-          budgetTypeId: bt.id,
-          value: values[bt.id] ?? null,
-        })),
+        cells: budgetTypes.map((bt) => ({ budgetTypeId: bt.id, value: values[bt.id] ?? null })),
       });
       if (!result.ok) return toast.error(result.error);
       toast.success(`${incomeType.name} allocation saved`);
@@ -144,34 +156,36 @@ function MatrixRow({
   }
 
   return (
-    <div className="rounded-lg border p-3">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="font-medium">{incomeType.name}</span>
-          <span className="text-xs text-muted-foreground">
-            {incomeType.cadence === "monthly" ? "monthly" : "yearly"}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-md border p-0.5">
-            <Button
+    <div className="rounded-[14px] border border-border p-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-[14px] font-bold">{incomeType.name}</span>
+        <CadencePill cadence={incomeType.cadence} />
+        <div className="ml-auto flex items-center gap-2.5">
+          <div className="flex rounded-full bg-secondary p-0.5 text-[11.5px] font-semibold">
+            <button
               type="button"
-              size="sm"
-              variant={mode === "percent" ? "secondary" : "ghost"}
-              className="h-6 px-2 text-xs"
               onClick={() => switchMode("percent")}
+              className={cn(
+                "rounded-full px-3 py-1 transition-colors",
+                mode === "percent"
+                  ? "bg-card text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
+                  : "text-muted-foreground"
+              )}
             >
               %
-            </Button>
-            <Button
+            </button>
+            <button
               type="button"
-              size="sm"
-              variant={mode === "amount" ? "secondary" : "ghost"}
-              className="h-6 px-2 text-xs"
               onClick={() => switchMode("amount")}
+              className={cn(
+                "rounded-full px-3 py-1 transition-colors",
+                mode === "amount"
+                  ? "bg-card text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
+                  : "text-muted-foreground"
+              )}
             >
               Rp
-            </Button>
+            </button>
           </div>
           <Button type="button" size="sm" onClick={handleSave} disabled={busy}>
             {busy ? "Saving…" : "Save"}
@@ -180,39 +194,31 @@ function MatrixRow({
       </div>
 
       {showSumWarning && (
-        <p className="mb-2 rounded-md bg-amber-100 px-2.5 py-1.5 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+        <WarningNote className="mt-3">
           Percentages sum to {percentSum!.toLocaleString("id-ID")}%, not 100%. Saved anyway —
           allocations are applied as entered.
-        </p>
-      )}
-
-      {mode === "amount" && amountTotal !== null && (
-        <p className="mb-2 text-xs text-muted-foreground">
-          Row total: <span className="font-medium tabular-nums">{formatIDR(amountTotal)}</span>
-          {latestIncome !== undefined && (
-            <>
-              {" "}
-              · last {incomeType.name} received:{" "}
-              <span className="font-medium tabular-nums">{formatIDR(latestIncome)}</span>
-            </>
-          )}
-        </p>
+        </WarningNote>
       )}
 
       {showAmountWarning && (
-        <p className="mb-2 rounded-md bg-amber-100 px-2.5 py-1.5 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
-          Amounts total {formatIDR(amountTotal!)}, but the last {incomeType.name} received was{" "}
+        <WarningNote className="mt-3">
+          ⚠ Amounts total {formatIDR(amountTotal!)}, but the last {incomeType.name} received was{" "}
           {formatIDR(latestIncome!)}. Only the derived % is applied — the allocation scales to the
           income actually received.
-        </p>
+        </WarningNote>
       )}
 
-      <div className="overflow-x-auto">
-        <div className="flex min-w-max gap-2">
-          {budgetTypes.map((budgetType) => (
-            <div key={budgetType.id} className="w-28 shrink-0 space-y-1">
-              <div className="truncate text-xs font-medium text-muted-foreground">
-                {budgetType.name}
+      <div className="mt-3.5 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
+        {budgetTypes.map((budgetType) => {
+          const hue = envelopeHue(budgetType.name);
+          return (
+            <div key={budgetType.id} className="min-w-0">
+              <div
+                className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-semibold"
+                style={{ color: hue.text }}
+              >
+                <span className="size-[7px] shrink-0 rounded-full" style={{ background: hue.fill }} />
+                <span className="truncate">{budgetType.name}</span>
               </div>
               {mode === "percent" ? (
                 <div className="relative">
@@ -222,18 +228,17 @@ function MatrixRow({
                     min={0}
                     max={100}
                     step="any"
-                    className="pr-6 tabular-nums"
+                    className="pr-7 text-right font-semibold tabular-nums"
                     value={values[budgetType.id] ?? ""}
                     onChange={(e) =>
                       setValues((prev) => ({
                         ...prev,
-                        [budgetType.id]:
-                          e.target.value === "" ? null : Number(e.target.value),
+                        [budgetType.id]: e.target.value === "" ? null : Number(e.target.value),
                       }))
                     }
                     aria-label={`${incomeType.name} → ${budgetType.name} percent`}
                   />
-                  <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-xs text-muted-foreground">
+                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[13px] text-muted-foreground">
                     %
                   </span>
                 </div>
@@ -241,13 +246,10 @@ function MatrixRow({
                 <>
                   <AmountInput
                     value={values[budgetType.id] ?? null}
-                    onChange={(v) =>
-                      setValues((prev) => ({ ...prev, [budgetType.id]: v }))
-                    }
-                    className="pl-8 text-sm"
+                    onChange={(v) => setValues((prev) => ({ ...prev, [budgetType.id]: v }))}
                     aria-label={`${incomeType.name} → ${budgetType.name} amount`}
                   />
-                  <div className="text-right text-xs tabular-nums text-muted-foreground">
+                  <div className="mt-1 text-right text-[11px] tabular-nums text-muted-foreground">
                     {derivedPercents?.get(budgetType.id) !== undefined
                       ? `= ${formatPercent(derivedPercents.get(budgetType.id)!)}`
                       : "—"}
@@ -255,9 +257,47 @@ function MatrixRow({
                 </>
               )}
             </div>
-          ))}
-        </div>
+          );
+        })}
       </div>
+
+      {mode === "percent" && percentSum !== null && (
+        <div className="mt-2.5 text-right text-[12px] text-muted-foreground">
+          Sum:{" "}
+          <span className="ml-1 font-semibold tabular-nums text-foreground">
+            {percentSum.toLocaleString("id-ID")}%
+          </span>
+        </div>
+      )}
+      {mode === "amount" && amountTotal !== null && (
+        <div className="mt-2.5 text-right text-[12px] text-muted-foreground">
+          Total:{" "}
+          <span className="mx-1 font-semibold tabular-nums text-foreground">
+            {formatIDR(amountTotal)}
+          </span>
+          {latestIncome !== undefined && (
+            <>
+              · last {incomeType.name} received:{" "}
+              <span className="ml-1 font-semibold tabular-nums text-foreground">
+                {formatIDR(latestIncome)}
+              </span>
+            </>
+          )}
+        </div>
+      )}
     </div>
+  );
+}
+
+function WarningNote({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <p
+      className={cn(
+        "rounded-[10px] border border-warning px-3.5 py-2.5 text-[12px] text-warning-foreground",
+        className
+      )}
+    >
+      {children}
+    </p>
   );
 }
