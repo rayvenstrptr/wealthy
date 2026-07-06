@@ -118,13 +118,14 @@ Mobile-first; the bottom tab bar has **6 tabs** (Home/Expenses/Income/Invest/Eve
 - `src/components/income-split-editor.tsx` — the Rp/% split editor; `income-form.tsx` owns prefill state
 - `src/components/add-expense-provider.tsx` — shared Add-Expense dialog (`useAddExpense()`)
 - `src/components/inline-edit.tsx`, `amount-input.tsx`, `simple-select.tsx` — shared field primitives
+- `src/components/period-filter.tsx` — expenses/income period filter (month/year/all-time in the `month` URL param, stepper capsule, mobile bottom sheet, payday-cycle caption); param parsing via `src/lib/period.ts` (unit-tested)
 - `src/components/settings/` — income-types, categories, budget-types (investment badge), asset-classes, class-targets (year stepper + copy-prev-year), investment-items
 - `src/components/nav.tsx` — desktop top bar + mobile 6-tab bottom bar
 - `src/app/globals.css` — Tailwind v4 theme tokens (colors/radius live here as CSS vars)
 
 **Rules of engagement for visual work:** don't touch the lib/ math modules, actions, or schema; mobile-first (bottom nav + FAB ergonomics are sacred; expense entry ≤ 2 taps); keep both themes working; verify with `npm test` + `npm run build`; eyeball on the dev server (mock data — delete `.mock/db.json` to reset).
 
-**Remaining front-end candidates (unprioritized):** charts (income by type, spending trend, class allocation donut), budget bar micro-design, skeleton/loading states, better empty states, month-picker UX, PWA/installability, subtle motion on save/toasts.
+**Remaining front-end candidates (unprioritized):** charts (income by type, spending trend, class allocation donut), budget bar micro-design, skeleton/loading states, better empty states, PWA/installability, subtle motion on save/toasts.
 
 ## Non-goals (current)
 

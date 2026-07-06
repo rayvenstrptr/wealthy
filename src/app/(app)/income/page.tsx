@@ -1,5 +1,6 @@
 import type { SplitCell } from "@/lib/allocation-split";
-import { currentMonthWIB, monthLabel, monthRange } from "@/lib/dates";
+import { currentMonthWIB } from "@/lib/dates";
+import { normalizePeriod, periodLabel, periodRange } from "@/lib/period";
 import {
   getConfig,
   getIncomeAllocations,
@@ -22,11 +23,11 @@ export default async function IncomePage({
 }) {
   const params = await searchParams;
   const defaultMonth = currentMonthWIB();
-  const month = params.month ?? defaultMonth;
+  const month = normalizePeriod(params.month, defaultMonth);
   const type = params.type ?? "all";
   const q = params.q ?? "";
 
-  const range = month !== "all" ? monthRange(month) : undefined;
+  const range = periodRange(month);
 
   const [config, incomes, latestSplitByType] = await Promise.all([
     getConfig(),
@@ -55,7 +56,7 @@ export default async function IncomePage({
       <div className="flex items-baseline justify-between gap-4">
         <h1 className="text-[28px] font-bold tracking-[-0.02em]">Income</h1>
         <p className="text-[12.5px] text-muted-foreground">
-          {month === "all" ? "All time" : monthLabel(month)} ·{" "}
+          {periodLabel(month)} ·{" "}
           <span className="font-medium text-foreground tabular-nums">{formatIDR(total)}</span> total
         </p>
       </div>
@@ -67,6 +68,7 @@ export default async function IncomePage({
         splitByIncome={splitByIncome}
         latestSplitByType={latestSplitByType}
         month={month}
+        defaultMonth={defaultMonth}
         type={type}
         q={q}
       />

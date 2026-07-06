@@ -6,7 +6,8 @@ import { toast } from "sonner";
 import { Pencil, Plus, Search } from "lucide-react";
 import { updateIncome } from "@/lib/actions/entries";
 import { scaleSplit, type SplitCell } from "@/lib/allocation-split";
-import { formatDate, monthLabel } from "@/lib/dates";
+import { formatDate } from "@/lib/dates";
+import { PeriodFilter } from "@/components/period-filter";
 import type { BudgetType, IncomeRow, IncomeType } from "@/lib/types";
 import { IncomeForm } from "@/components/income-form";
 import { InlineAmount, InlineName } from "@/components/inline-edit";
@@ -31,7 +32,8 @@ interface IncomeListProps {
   splitByIncome: Record<string, SplitCell[]>;
   /** Prefill source for the add form. */
   latestSplitByType: Record<string, SplitCell[]>;
-  month: string; // "YYYY-MM" or "all"
+  month: string; // "YYYY-MM", "YYYY", or "all"
+  defaultMonth: string; // current budget month
   type: string; // income type id or "all"
   q: string;
 }
@@ -52,6 +54,7 @@ export function IncomeList({
   splitByIncome,
   latestSplitByType,
   month,
+  defaultMonth,
   type,
   q,
 }: IncomeListProps) {
@@ -113,11 +116,6 @@ export function IncomeList({
     return true;
   }
 
-  const monthOptions = [
-    { value: ALL, label: "All time" },
-    ...monthChoices(month === ALL ? undefined : month).map((m) => ({ value: m, label: monthLabel(m) })),
-  ];
-
   return (
     <div className="space-y-[18px]">
       <div className="flex flex-wrap items-center gap-2.5">
@@ -131,11 +129,10 @@ export function IncomeList({
             className="h-9 w-full rounded-full bg-card pr-4 pl-10 text-[13px] shadow-[0_1px_2px_rgba(38,35,30,0.05)] outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-secondary"
           />
         </div>
-        <SimpleSelect
+        <PeriodFilter
           value={month}
+          defaultMonth={defaultMonth}
           onChange={(v) => update({ month: v })}
-          options={monthOptions}
-          className={pillClass(month !== ALL)}
         />
         <SimpleSelect
           value={type}
@@ -270,19 +267,4 @@ export function IncomeList({
       </Dialog>
     </div>
   );
-}
-
-/** A window of selectable budget months around the current one (±12). */
-function monthChoices(center: string | undefined): string[] {
-  const ref = center ?? new Date().toISOString().slice(0, 7);
-  const [y, m] = ref.split("-").map(Number);
-  const base = y * 12 + (m - 1);
-  const out: string[] = [];
-  for (let d = 12; d >= -12; d--) {
-    const total = base + d;
-    const ny = Math.floor(total / 12);
-    const nm = (total % 12) + 1;
-    out.push(`${ny}-${String(nm).padStart(2, "0")}`);
-  }
-  return out;
 }

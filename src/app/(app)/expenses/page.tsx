@@ -1,4 +1,5 @@
-import { currentMonthWIB, monthLabel, monthRange } from "@/lib/dates";
+import { currentMonthWIB } from "@/lib/dates";
+import { normalizePeriod, periodLabel, periodRange } from "@/lib/period";
 import { getConfig, getExpenses } from "@/lib/data";
 import { formatIDR } from "@/lib/format";
 import { ExpenseFilters } from "@/components/expense-filters";
@@ -19,13 +20,13 @@ export default async function ExpensesPage({
 }) {
   const params = await searchParams;
   const defaultMonth = currentMonthWIB();
-  const month = params.month ?? defaultMonth;
+  const month = normalizePeriod(params.month, defaultMonth);
   const budget = params.budget ?? "all";
   const category = params.category ?? "all";
   const event = params.event ?? "all";
   const q = params.q ?? "";
 
-  const range = month !== "all" ? monthRange(month) : undefined;
+  const range = periodRange(month);
 
   const [config, expenses] = await Promise.all([
     getConfig(),
@@ -46,7 +47,7 @@ export default async function ExpensesPage({
       <div className="flex items-baseline justify-between gap-4">
         <h1 className="text-[28px] font-bold tracking-[-0.02em]">Expenses</h1>
         <p className="text-[12.5px] text-muted-foreground">
-          {expenses.length} entries · {month === "all" ? "All time" : monthLabel(month)} ·{" "}
+          {expenses.length} entries · {periodLabel(month)} ·{" "}
           <span className="font-medium text-foreground tabular-nums">{formatIDR(total)}</span> total
         </p>
       </div>

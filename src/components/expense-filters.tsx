@@ -3,15 +3,15 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search, X } from "lucide-react";
-import { monthLabel } from "@/lib/dates";
 import type { BudgetType, EventRow, ExpenseCategory } from "@/lib/types";
+import { PeriodFilter } from "@/components/period-filter";
 import { SimpleSelect } from "@/components/simple-select";
 import { cn } from "@/lib/utils";
 
 const ALL = "all";
 
 export interface ExpenseFilterValues {
-  month: string; // "YYYY-MM" or "all"
+  month: string; // "YYYY-MM", "YYYY", or "all"
   budget: string;
   category: string;
   event: string;
@@ -68,11 +68,6 @@ export function ExpenseFilters({
   const withArchivedLabel = (name: string, isActive: boolean) =>
     isActive ? name : `${name} (archived)`;
 
-  const monthOptions = [
-    { value: ALL, label: "All time" },
-    ...monthChoices(defaultMonth).map((m) => ({ value: m, label: monthLabel(m) })),
-  ];
-
   const dirty =
     values.budget !== ALL ||
     values.category !== ALL ||
@@ -93,11 +88,10 @@ export function ExpenseFilters({
         />
       </div>
 
-      <SimpleSelect
+      <PeriodFilter
         value={values.month}
+        defaultMonth={defaultMonth}
         onChange={(v) => update({ month: v })}
-        options={monthOptions}
-        className={pillClass(values.month !== defaultMonth)}
       />
 
       <SimpleSelect
@@ -147,16 +141,3 @@ export function ExpenseFilters({
   );
 }
 
-/** A window of selectable budget months around the current one (±12). */
-function monthChoices(center: string): string[] {
-  const [y, m] = center.split("-").map(Number);
-  const base = y * 12 + (m - 1);
-  const out: string[] = [];
-  for (let d = 12; d >= -12; d--) {
-    const total = base + d;
-    const ny = Math.floor(total / 12);
-    const nm = (total % 12) + 1;
-    out.push(`${ny}-${String(nm).padStart(2, "0")}`);
-  }
-  return out;
-}
