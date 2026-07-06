@@ -1,11 +1,12 @@
 // File-backed store for local mock mode. Single user, dev only — synchronous
-// fs is fine here. First load seeds the same defaults the SQL trigger creates,
-// plus a handful of demo entries so the dashboard has something to show.
+// fs is fine here. First load seeds the same defaults the SQL trigger creates
+// (envelopes, categories, income types, investment reference data) and nothing
+// else: a new user starts blank — no demo incomes, expenses, or transactions.
 
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { currentYearWIB, shiftMonth, todayWIB } from "@/lib/dates";
+import { currentYearWIB } from "@/lib/dates";
 import type {
   AssetClass,
   AssetClassTarget,
@@ -95,7 +96,6 @@ function seed(): MockDb {
     is_active: true,
     created_at: next(),
   }));
-  const incomeType = Object.fromEntries(incomeTypes.map((t) => [t.name, t.id]));
 
   // No "Invest" category: investment-kind envelopes are deployed via the
   // investments module, never via expenses.
@@ -118,7 +118,6 @@ function seed(): MockDb {
     is_active: true,
     created_at: next(),
   }));
-  const category = Object.fromEntries(categories.map((c) => [c.name, c.id]));
 
   // ---- Investments reference data ----
   const classDefs: [string, number][] = [
@@ -166,150 +165,22 @@ function seed(): MockDb {
     is_active: true,
     created_at: next(),
   }));
-  const item = Object.fromEntries(investmentItems.map((i) => [i.name, i.id]));
 
-  // ---- Demo entries (delete freely in the UI) ----
-  const today = todayWIB();
-  const month = today.slice(0, 7);
-  const year = today.slice(0, 4);
-  const prevMonth = shiftMonth(month, -1);
-
-  // Starts on the 20th so it sits in the PREVIOUS budget month (cycle runs
-  // 25th → 24th) and the event demonstrably crosses budget months.
-  const baliTrip: EventRow & Stamped = {
-    id: newId(),
-    name: "Bali trip",
-    starts_on: `${prevMonth}-20`,
-    ends_on: `${month}-02`,
-    notes: "Long weekend getaway",
-    created_at: next(),
-  };
-
-  const incomes: MockDb["incomes"] = [
-    {
-      id: newId(),
-      // Payday is the 25th — that salary funds the FOLLOWING budget month.
-      name: "Monthly salary",
-      amount: 10_500_000,
-      date: `${prevMonth}-25`,
-      income_type_id: incomeType.Salary,
-      notes: null,
-      created_at: next(),
-    },
-    {
-      id: newId(),
-      name: "THR",
-      amount: 5_000_000,
-      date: `${year}-03-30`,
-      income_type_id: incomeType.THR,
-      notes: null,
-      created_at: next(),
-    },
-    {
-      id: newId(),
-      name: "BBCA dividend",
-      amount: 1_200_000,
-      date: `${year}-05-12`,
-      income_type_id: incomeType.Yield,
-      notes: null,
-      created_at: next(),
-    },
-  ];
-  const [salaryIncome, thrIncome, dividendIncome] = incomes;
-
-  // Every income carries its own exact-sum envelope split (zero cells omitted).
-  const incomeAllocations: MockDb["incomeAllocations"] = [];
-  const addSplit = (incomeId: string, cells: [string, number][]) => {
-    for (const [budgetName, amount] of cells) {
-      incomeAllocations.push({
-        id: newId(),
-        income_id: incomeId,
-        budget_type_id: budget[budgetName],
-        amount,
-        created_at: next(),
-      });
-    }
-  };
-  // Salary 10.5jt @ 20/10/50/15/5
-  addSplit(salaryIncome.id, [
-    ["Invest", 2_100_000],
-    ["Cash", 1_050_000],
-    ["Life", 5_250_000],
-    ["Fun", 1_575_000],
-    ["Giving", 525_000],
-  ]);
-  // THR 5jt @ 20/0/50/30/0
-  addSplit(thrIncome.id, [
-    ["Invest", 1_000_000],
-    ["Life", 2_500_000],
-    ["Fun", 1_500_000],
-  ]);
-  // Dividend 1.2jt @ 20/10/50/15/5
-  addSplit(dividendIncome.id, [
-    ["Invest", 240_000],
-    ["Cash", 120_000],
-    ["Life", 600_000],
-    ["Fun", 180_000],
-    ["Giving", 60_000],
-  ]);
-
-  const expenseDefs: [string, number, string, string, string, string | null][] = [
-    // name, amount, date, category, budget type, event
-    ["Kolekte", 100_000, `${month}-01`, "Kolekte", "Giving", null],
-    ["Groceries", 350_000, `${month}-02`, "Daily", "Life", null],
-    ["Grab to office", 32_000, `${month}-03`, "Transport", "Life", null],
-    ["Lunch at warteg", 45_000, today, "Food", "Life", null],
-    ["Kopi kenangan", 58_000, today, "Jajan", "Fun", null],
-    ["Flights CGK–DPS", 1_800_000, `${prevMonth}-20`, "Extra", "Fun", baliTrip.id],
-    ["Villa 2 nights", 2_400_000, `${month}-02`, "Extra", "Fun", baliTrip.id],
-  ];
-  const expenses: MockDb["expenses"] = expenseDefs.map(
-    ([name, amount, date, categoryName, budgetName, eventId]) => ({
-      id: newId(),
-      name,
-      amount,
-      date,
-      budget_type_id: budget[budgetName],
-      expense_category_id: category[categoryName],
-      event_id: eventId,
-      notes: null,
-      created_at: next(),
-    })
-  );
-
-  // Demo transactions: a BBCA round trip (avg cost 9.5k/share; sell 200 for
-  // 2.08jt → +180k realized) plus open positions with and without quantity.
-  const txDefs: [string, "buy" | "sell", number, number | null, string][] = [
-    ["BBCA", "buy", 2_700_000, 300, `${prevMonth}-26`],
-    ["BBCA", "buy", 2_050_000, 200, `${month}-02`],
-    ["BBCA", "sell", 2_080_000, 200, today],
-    ["Deposito Superbank", "buy", 3_000_000, null, `${prevMonth}-28`],
-    ["BTC", "buy", 1_000_000, 0.0005, `${month}-03`],
-  ];
-  const investmentTransactions: MockDb["investmentTransactions"] = txDefs.map(
-    ([itemName, side, amount, quantity, date]) => ({
-      id: newId(),
-      item_id: item[itemName],
-      side,
-      amount,
-      quantity,
-      date,
-      notes: null,
-      created_at: next(),
-    })
-  );
-
+  // Reference/config data only — no demo entries. This mirrors the SQL
+  // trigger seed_user_defaults(): a brand-new user starts with envelopes,
+  // categories, income types, and the investment reference set, but a blank
+  // slate for incomes, expenses, events, and transactions.
   return {
     incomeTypes,
     budgetTypes,
     categories,
-    events: [baliTrip],
-    incomes,
-    incomeAllocations,
-    expenses,
+    events: [],
+    incomes: [],
+    incomeAllocations: [],
+    expenses: [],
     assetClasses,
     assetClassTargets,
     investmentItems,
-    investmentTransactions,
+    investmentTransactions: [],
   };
 }
