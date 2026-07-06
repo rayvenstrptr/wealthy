@@ -7,24 +7,21 @@ import { formatDate } from "@/lib/dates";
 import { formatIDR } from "@/lib/format";
 import type { AssetClass, InvestmentItem, InvestmentTransaction } from "@/lib/types";
 import { TransactionForm } from "@/components/investments/transaction-form";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 export interface ItemView {
   item: InvestmentItem;
   units: number | null;
   costBasis: number;
-  /** Realized P&L within the selected window. */
+  /** Realized P&L within the selected window (trading + yields). */
   realized: number;
-  /** realized ÷ basis sold within the window; null when nothing sold. */
+  /** Windowed gain ÷ capital involved; null when there's no denominator. */
   realizedPct: number | null;
   /** All transactions of the item, newest first. */
   transactions: InvestmentTransaction[];
+  /** All yields/dividends attributed to the item, newest first. */
+  yields: { amount: number; date: string }[];
 }
 
 export interface ClassGroup {
@@ -62,8 +59,98 @@ function RealizedLabel({ realized, pct }: { realized: number; pct: number | null
   );
 }
 
+interface LedgerRow {
+  key: string;
+  kind: "buy" | "sell" | "yield";
+  date: string;
+  amount: number;
+  quantity: number | null;
+  /** Present for buy/sell rows — yields are edited on /income. */
+  tx?: InvestmentTransaction;
+}
+
+const ledgerKindColor: Record<LedgerRow["kind"], string | undefined> = {
+  buy: undefined,
+  sell: "oklch(0.5 0.12 155)",
+  yield: "oklch(0.55 0.11 85)",
+};
+
+/** Chronological history of one item — buys/sells (editable) + yields. */
+function ItemLedger({
+  view,
+  onEdit,
+}: {
+  view: ItemView;
+  onEdit: (tx: InvestmentTransaction) => void;
+}) {
+  const rows: LedgerRow[] = [
+    ...view.transactions.map((tx) => ({
+      key: tx.id,
+      kind: tx.side,
+      date: tx.date,
+      amount: tx.amount,
+      quantity: tx.quantity,
+      tx,
+    })),
+    ...view.yields.map((y, i) => ({
+      key: `yield-${i}`,
+      kind: "yield" as const,
+      date: y.date,
+      amount: y.amount,
+      quantity: null,
+    })),
+  ].sort((a, b) => b.date.localeCompare(a.date));
+
+  return (
+    <div className="bg-sunken px-4 pb-3">
+      {rows.map((row) => (
+        <div
+          key={row.key}
+          className="grid grid-cols-[52px_1fr_auto_32px] items-center gap-2 py-2 text-[12.5px]"
+          style={{ borderBottom: "1px solid var(--border)" }}
+        >
+          <span
+            className={cn(
+              "font-bold uppercase tracking-[0.06em]",
+              row.kind === "buy" && "text-muted-foreground",
+            )}
+            style={ledgerKindColor[row.kind] ? { color: ledgerKindColor[row.kind] } : undefined}
+          >
+            {row.kind}
+          </span>
+          <span className="text-muted-foreground">
+            {formatDate(row.date)}
+            {row.quantity != null && <span className="tabular-nums"> · {row.quantity} u</span>}
+          </span>
+          <span className="text-right font-semibold tabular-nums">{formatIDR(row.amount)}</span>
+          {row.tx ? (
+            <button
+              type="button"
+              onClick={() => onEdit(row.tx!)}
+              aria-label="Edit transaction"
+              className="inline-flex size-7 items-center justify-center rounded-full text-placeholder transition-colors hover:text-foreground"
+            >
+              <Pencil className="size-3.5" />
+            </button>
+          ) : (
+            <span aria-hidden />
+          )}
+        </div>
+      ))}
+      {rows.length === 0 && (
+        <p className="py-2 text-[12.5px] text-muted-foreground">No transactions yet.</p>
+      )}
+    </div>
+  );
+}
+
 /** Per-class holdings: expandable item rows with transaction history + edit. */
-export function ItemSection({ groups, assetClasses, allItems, remainingByClass }: ItemSectionProps) {
+export function ItemSection({
+  groups,
+  assetClasses,
+  allItems,
+  remainingByClass,
+}: ItemSectionProps) {
   const [openItem, setOpenItem] = useState<string | null>(null);
   const [editingTx, setEditingTx] = useState<InvestmentTransaction | null>(null);
 
@@ -78,7 +165,11 @@ export function ItemSection({ groups, assetClasses, allItems, remainingByClass }
           <div key={assetClass.id}>
             <div className="flex items-baseline justify-between gap-2">
               <span className="flex items-center gap-2">
-                <span className="size-2 rounded-full" style={{ background: hue.fill }} aria-hidden />
+                <span
+                  className="size-2 rounded-full"
+                  style={{ background: hue.fill }}
+                  aria-hidden
+                />
                 <span className="text-[12px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
                   {assetClass.name}
                 </span>
@@ -139,56 +230,12 @@ export function ItemSection({ groups, assetClasses, allItems, remainingByClass }
                       <ChevronDown
                         className={cn(
                           "size-4 text-placeholder transition-transform",
-                          expanded && "rotate-180"
+                          expanded && "rotate-180",
                         )}
                       />
                     </button>
 
-                    {expanded && (
-                      <div className="bg-sunken px-4 pb-3">
-                        {view.transactions.map((tx) => (
-                          <div
-                            key={tx.id}
-                            className="grid grid-cols-[52px_1fr_auto_32px] items-center gap-2 py-2 text-[12.5px]"
-                            style={{ borderBottom: "1px solid var(--border)" }}
-                          >
-                            <span
-                              className={cn(
-                                "font-bold uppercase tracking-[0.06em]",
-                                tx.side === "buy" ? "text-muted-foreground" : ""
-                              )}
-                              style={
-                                tx.side === "sell" ? { color: "oklch(0.5 0.12 155)" } : undefined
-                              }
-                            >
-                              {tx.side}
-                            </span>
-                            <span className="text-muted-foreground">
-                              {formatDate(tx.date)}
-                              {tx.quantity != null && (
-                                <span className="tabular-nums"> · {tx.quantity} u</span>
-                              )}
-                            </span>
-                            <span className="text-right font-semibold tabular-nums">
-                              {formatIDR(tx.amount)}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setEditingTx(tx)}
-                              aria-label="Edit transaction"
-                              className="inline-flex size-7 items-center justify-center rounded-full text-placeholder transition-colors hover:text-foreground"
-                            >
-                              <Pencil className="size-3.5" />
-                            </button>
-                          </div>
-                        ))}
-                        {view.transactions.length === 0 && (
-                          <p className="py-2 text-[12.5px] text-muted-foreground">
-                            No transactions yet.
-                          </p>
-                        )}
-                      </div>
-                    )}
+                    {expanded && <ItemLedger view={view} onEdit={setEditingTx} />}
                   </div>
                 );
               })}

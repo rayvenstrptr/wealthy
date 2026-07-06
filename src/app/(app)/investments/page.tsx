@@ -133,6 +133,13 @@ export default async function InvestmentsPage({
     if (!inWindow(y.date)) continue;
     yieldByItem.set(y.item_id, (yieldByItem.get(y.item_id) ?? 0) + y.amount);
   }
+  // Full yield history per item (any date) for the drill-down ledger.
+  const yieldRowsByItem = new Map<string, { amount: number; date: string }[]>();
+  for (const y of yields) {
+    const list = yieldRowsByItem.get(y.item_id);
+    if (list) list.push({ amount: y.amount, date: y.date });
+    else yieldRowsByItem.set(y.item_id, [{ amount: y.amount, date: y.date }]);
+  }
 
   const txsByItem = new Map<string, typeof transactions>();
   for (const tx of transactions) {
@@ -150,20 +157,25 @@ export default async function InvestmentsPage({
         .filter(
           (item) =>
             item.asset_class_id === assetClass.id &&
-            (txsByItem.has(item.id) || yieldByItem.has(item.id))
+            (txsByItem.has(item.id) || yieldRowsByItem.has(item.id))
         )
         .map((item) => {
           const pos = positions.get(item.id);
           const windowed = windowedByItem.get(item.id);
           const itemYield = yieldByItem.get(item.id) ?? 0;
+          const realized = (windowed?.realized ?? 0) + itemYield;
+          // % denominator: basis sold (trading, as always) — plus the open
+          // cost when yields exist, so a dividend reads as yield-on-cost.
+          const pctBase =
+            (windowed?.basisSold ?? 0) + (itemYield !== 0 ? (pos?.costBasis ?? 0) : 0);
           return {
             item,
             units: pos?.units ?? null,
             costBasis: pos?.costBasis ?? 0,
-            realized: (windowed?.realized ?? 0) + itemYield,
-            realizedPct:
-              windowed && windowed.basisSold > 0 ? windowed.realized / windowed.basisSold : null,
+            realized,
+            realizedPct: pctBase > 0 ? realized / pctBase : null,
             transactions: [...(txsByItem.get(item.id) ?? [])].reverse(), // newest first
+            yields: [...(yieldRowsByItem.get(item.id) ?? [])].reverse(), // newest first
           };
         })
         .sort((a, b) => b.costBasis - a.costBasis),
@@ -315,10 +327,10 @@ export default async function InvestmentsPage({
         </div>
       </div>
 
-      {/* Trade log */}
+      {/* Log — every buy/sell/yield in the window, chronological */}
       <div>
         <div className="flex items-baseline justify-between">
-          <span className="text-[16px] font-bold">Trade log</span>
+          <span className="text-[16px] font-bold">Log</span>
           <span className="text-[12.5px] text-muted-foreground">
             {tradeLogRows.length} {tradeLogRows.length === 1 ? "entry" : "entries"}
           </span>
