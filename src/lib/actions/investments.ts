@@ -218,6 +218,90 @@ export async function deleteInvestmentTransaction(id: string): Promise<ActionRes
   return { ok: true };
 }
 
+// ---------- Yields ----------
+
+interface YieldInput {
+  item_id: string;
+  name: string;
+  amount: number;
+  date: string;
+  income_type_id: string;
+  notes: string | null;
+  /** Envelope split — must sum EXACTLY to `amount` (same hard rule as incomes). */
+  allocations: { budget_type_id: string; amount: number }[];
+}
+
+function validateYield(input: YieldInput): string | null {
+  if (!input.item_id) return "Item is required.";
+  if (!input.name.trim()) return "Name is required.";
+  if (!Number.isFinite(input.amount) || input.amount <= 0) return "Amount must be greater than 0.";
+  if (!input.date) return "Date is required.";
+  if (!input.income_type_id) return "Income type is required.";
+  for (const cell of input.allocations) {
+    if (!Number.isInteger(cell.amount) || cell.amount < 0) {
+      return "Split amounts must be zero or positive.";
+    }
+  }
+  const splitTotal = input.allocations.reduce((sum, c) => sum + c.amount, 0);
+  if (splitTotal !== input.amount) return "Split must add up to the yield amount.";
+  return null;
+}
+
+/**
+ * Records a yield/dividend from an investment item as a NORMAL income (with
+ * an envelope split) carrying investment_item_id for per-holding attribution.
+ * One entry, no double bookkeeping: the money funds envelopes like any income;
+ * the investments view folds it into realized.
+ */
+export async function createInvestmentYield(input: YieldInput): Promise<ActionResult> {
+  const invalid = validateYield(input);
+  if (invalid) return { ok: false, error: invalid };
+  const nonZero = input.allocations.filter((c) => c.amount > 0);
+  if (isMockMode()) {
+    return done(
+      mock.createIncome({
+        name: input.name.trim(),
+        amount: input.amount,
+        date: input.date,
+        income_type_id: input.income_type_id,
+        notes: input.notes?.trim() || null,
+        investment_item_id: input.item_id,
+        allocations: nonZero,
+      })
+    );
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("incomes")
+    .insert({
+      name: input.name.trim(),
+      amount: input.amount,
+      date: input.date,
+      income_type_id: input.income_type_id,
+      notes: input.notes?.trim() || null,
+      investment_item_id: input.item_id,
+    })
+    .select("id")
+    .single();
+  if (error || !data) return failure(error, "Could not save yield.");
+
+  // Same compensating-delete pattern as createIncome (no transactions).
+  const { error: splitError } = await supabase.from("income_allocations").insert(
+    nonZero.map((cell) => ({
+      income_id: data.id,
+      budget_type_id: cell.budget_type_id,
+      amount: cell.amount,
+    }))
+  );
+  if (splitError) {
+    await supabase.from("incomes").delete().eq("id", data.id);
+    return failure(splitError, "Could not save the envelope split.");
+  }
+  revalidateAll();
+  return { ok: true };
+}
+
 async function fetchItemTransactions(itemId: string) {
   const supabase = await createClient();
   const { data, error } = await supabase

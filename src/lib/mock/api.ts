@@ -14,7 +14,7 @@ import type {
 } from "@/lib/types";
 import type { ExpenseFilters, IncomeFilters } from "@/lib/data";
 import type { SplitCell } from "@/lib/allocation-split";
-import { validateSell } from "@/lib/investments";
+import { validateSell, type YieldEvent } from "@/lib/investments";
 import { loadDb, newId, saveDb, stamp, type MockDb } from "./store";
 
 type Dated = { date: string; created_at: string };
@@ -117,6 +117,15 @@ export function getInvestmentTransactions(): InvestmentTransaction[] {
   const db = loadDb();
   // Chronological — the math folds these in order.
   return [...db.investmentTransactions].sort(byDateAsc);
+}
+
+/** Yield/dividend incomes attributed to investment items, chronological. */
+export function getInvestmentYields(): YieldEvent[] {
+  const db = loadDb();
+  return db.incomes
+    .filter((i) => i.investment_item_id != null)
+    .sort(byDateAsc)
+    .map((i) => ({ item_id: i.investment_item_id!, amount: i.amount, date: i.date }));
 }
 
 // ---------- Settings writes ----------

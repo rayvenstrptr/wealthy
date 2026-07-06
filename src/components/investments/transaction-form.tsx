@@ -59,9 +59,9 @@ export function TransactionForm({
   );
   const classItems = useMemo(
     () =>
-      items.filter(
-        (i) => i.asset_class_id === classId && (i.is_active || i.id === initial?.item_id)
-      ),
+      items
+        .filter((i) => i.asset_class_id === classId && (i.is_active || i.id === initial?.item_id))
+        .sort((a, b) => a.name.localeCompare(b.name)),
     [items, classId, initial]
   );
 
@@ -160,28 +160,27 @@ export function TransactionForm({
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="tx-class">Asset class</Label>
-          <SimpleSelect
-            id="tx-class"
-            value={classId}
-            onChange={handleClassChange}
-            options={activeClasses.map((c) => ({ value: c.id, label: c.name }))}
-            placeholder="Class"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="tx-item">Item</Label>
-          <SimpleSelect
-            id="tx-item"
-            value={itemChoice}
-            onChange={setItemChoice}
-            options={itemOptions}
-            placeholder="Item"
-            disabled={classId == null}
-          />
-        </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="tx-class">Asset class</Label>
+        <SimpleSelect
+          id="tx-class"
+          value={classId}
+          onChange={handleClassChange}
+          options={activeClasses.map((c) => ({ value: c.id, label: c.name }))}
+          placeholder="Class"
+        />
+      </div>
+      {/* Item gets a full row of its own — names run long ("Pokemon TCG - …"). */}
+      <div className="space-y-1.5">
+        <Label htmlFor="tx-item">Item</Label>
+        <SimpleSelect
+          id="tx-item"
+          value={itemChoice}
+          onChange={setItemChoice}
+          options={itemOptions}
+          placeholder="Item"
+          disabled={classId == null}
+        />
       </div>
       {itemChoice === NEW_ITEM && (
         <Input

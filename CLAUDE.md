@@ -11,6 +11,8 @@ v1 (income + expenses + allocation matrix) and the first front-end pass (Envelop
 
 **v2.1 is built and verified** (unit tests + build + live import of Ray's real Y2025 sheet): (1) username + 4-digit-PIN auth (reused from the Split project) works in mock mode too — landing/login page, signed session cookie, user menu top right (Settings / Import / Log out), no auto-logout; (2) `/import` brings in expenses+income from an xlsx (Cat·Details·Date·Ex·In·Type·Notes) with a preview step — duplicate/similar-near-date warnings, auto-created categories/envelopes/income types, investment rows excluded (they belong in the investments module), formula cells keep the final amount with the calculation appended to notes; (3) expenses may be negative = surplus that refills the budget (warned in the form, green in lists; amount just must not be 0).
 
+**v2.2 is built and verified** (unit tests + build + live smoke against Ray's real data): (1) **yields** — "＋ Yield" on `/investments` records a dividend/coupon/TCG yield as ONE entry: a normal income (type + envelope split, exact-sum rule) carrying `incomes.investment_item_id` for per-holding attribution; yields fold into the realized totals (zero basis — the trading realized % is untouched); (2) **all-time capital** — the all-time view's budget is CUMULATIVE across all years (`capitalBase` = every Rp ever allocated to investment-kind envelopes); net worth all-time = holdings + undeployed capital, with an "Undeployed capital" stat; (3) sortable **trade log** table (date/name/amount, asc/desc) of buys+sells+yields in the window; (4) item dropdowns sorted A–Z, transaction/yield dialogs widened to 560px with Item on a full-width row (long TCG names); (5) Holdings & performance rows have per-class subtotals + aligned numeric columns; (6) Settings tab removed from the nav (lives in the user menu) — mobile bar is 5 tabs; (7) `/import` accepts drag-and-drop.
+
 Key implementation decisions already made (do not relitigate without reason):
 
 - **supabase-js directly** (no Drizzle) — RLS + auth flow through `@supabase/ssr` clients.
@@ -70,7 +72,8 @@ Ray invests irregularly ("buy when the time is right"), splitting risk across **
 - **Deployed = buys − sell proceeds** (net) per class per window — sells replenish the year's budget. A buy exceeding the class's remaining budget **warns, never blocks** (Ray intentionally overshoots sometimes). **Overselling is a HARD error** (`validateSell` in the actions).
 - **Performance is realized-only, average cost** (`src/lib/investments.ts`, unit-tested): with quantity, sell basis = qty × avg cost; without quantity, a sell closes the ENTIRE outstanding cost (deposito-style); realized % is cumulative Σrealized ÷ Σbasis-sold (Ray's −800k then +1jt → +200k example). Holdings shown at cost — no market valuations in v2.
 - **Windowing**: holdings/positions are always the current all-time state; realized P&L and deployed are windowed (yearly view) or total (all-time view).
-- **Net worth = holdings at cost + max(current-year budget − current-year deployed, 0)** — shown on `/investments`.
+- **Net worth = holdings at cost + max(budget − deployed, 0)** — shown on `/investments`. Yearly view uses the current-year budget; all-time view uses the CUMULATIVE capital (`capitalBase`, v2.2) = all invest-envelope income ever.
+- **Yields (v2.2)**: a dividend/coupon is an income with `investment_item_id` set (split across envelopes like any income — recorded once via the Yield dialog on `/investments`). `computeInvestmentSummary` takes `yields` and folds them into realized amounts per class/total (zero basis; `realizedPct` stays trading-only). `getInvestmentYields()` in data.ts reads them.
 - Dashboard: the Invest envelope card shows **Allocated vs Deployed** (net buys in the same window) and links to `/investments`.
 
 ## Data Model
@@ -97,7 +100,7 @@ Seed data: income types Salary(monthly)/Yield/Bonus/Angpao/THR/TCG Yield/Others;
 /login        Landing + sign-in/create-account (username + 4-digit PIN); default page when logged out
 ```
 
-Mobile-first; the bottom tab bar has **6 tabs** (Home/Expenses/Income/Invest/Events/Settings). A single "+ Expense" dialog is owned by `AddExpenseProvider` in `src/app/(app)/layout.tsx` and opened via `useAddExpense()` from both the FAB and the desktop nav; it stays open after save for rapid entry.
+Mobile-first; the bottom tab bar has **5 tabs** (Home/Expenses/Income/Invest/Events — Settings lives in the top-right user menu, v2.2). A single "+ Expense" dialog is owned by `AddExpenseProvider` in `src/app/(app)/layout.tsx` and opened via `useAddExpense()` from both the FAB and the desktop nav; it stays open after save for rapid entry.
 
 ## Conventions
 
@@ -113,7 +116,7 @@ Mobile-first; the bottom tab bar has **6 tabs** (Home/Expenses/Income/Invest/Eve
 - `src/app/(app)/page.tsx` — dashboard (stat cards, envelope cards incl. Invest→deployed variant)
 - `src/app/(app)/investments/page.tsx` — all investments math orchestration + layout
 - `src/components/dashboard/` — `period-picker`, `budget-performance`, `envelope-card` (has `verb="deployed"` prop)
-- `src/components/investments/` — `period-picker` (Yearly|All-time), `class-card`, `item-section` (holdings accordion + tx edit), `transaction-form` (inline item create, over-budget warn chip), `transaction-dialog`
+- `src/components/investments/` — `period-picker` (Yearly|All-time), `class-card`, `item-section` (holdings accordion + tx edit, per-class subtotals), `transaction-form` (inline item create, over-budget warn chip, A–Z items), `transaction-dialog`, `yield-form`/`yield-dialog` (v2.2 — reuses `IncomeSplitEditor` + split prefill), `trade-log` (v2.2 — sortable buys/sells/yields table)
 - `src/lib/envelope-colors.ts` / `src/lib/asset-class-colors.ts` — `envelopeHue(name)` / `assetClassHue(name)` → oklch {fill,tint,text,track}; pure presentation, warm-neutral fallback
 - `src/components/income-split-editor.tsx` — the Rp/% split editor; `income-form.tsx` owns prefill state
 - `src/components/add-expense-provider.tsx` — shared Add-Expense dialog (`useAddExpense()`)

@@ -5,6 +5,8 @@ import {
   getIncomes,
   getInvestmentConfig,
   getInvestmentTransactions,
+  getInvestmentYields,
+  getLatestSplitByIncomeType,
 } from "@/lib/data";
 import { formatIDR } from "@/lib/format";
 import {
@@ -19,7 +21,9 @@ import {
   InvestmentsPeriodPicker,
   type InvestmentsView,
 } from "@/components/investments/period-picker";
+import { TradeLog, type TradeLogRow } from "@/components/investments/trade-log";
 import { TransactionDialog } from "@/components/investments/transaction-dialog";
+import { YieldDialog } from "@/components/investments/yield-dialog";
 import { Badge } from "@/components/ui/badge";
 
 interface SearchParams {
@@ -56,28 +60,42 @@ export default async function InvestmentsPage({
   const range = yearRange(year);
   const currentRange = yearRange(currentYear);
 
-  const [config, investmentConfig, transactions, yearIncomes] = await Promise.all([
-    getConfig(),
-    getInvestmentConfig(),
-    getInvestmentTransactions(),
-    getIncomes({ start: range.start, end: range.end }),
-  ]);
+  const [config, investmentConfig, transactions, yields, latestSplitByType, yearIncomes] =
+    await Promise.all([
+      getConfig(),
+      getInvestmentConfig(),
+      getInvestmentTransactions(),
+      getInvestmentYields(),
+      getLatestSplitByIncomeType(),
+      getIncomes({ start: range.start, end: range.end }),
+    ]);
   const yearAllocations = await getIncomeAllocations(yearIncomes.map((i) => i.id));
   const investBudget = investBudgetOf(yearIncomes, yearAllocations, config.budgetTypes);
 
+  // All-time capital = every Rp ever allocated to investment-kind envelopes.
+  // The budget accumulates: unspent capital stays investable across years.
+  let capitalBase: number | undefined;
+  if (view === "alltime") {
+    const allIncomes = await getIncomes({});
+    const allAllocations = await getIncomeAllocations(allIncomes.map((i) => i.id));
+    capitalBase = investBudgetOf(allIncomes, allAllocations, config.budgetTypes);
+  }
+
   // Selected-view summary drives the cards (realized/deployed are windowed;
-  // holdings are always current all-time state).
+  // holdings are always current all-time state). Yields fold into realized.
   const summary: InvestmentSummary = computeInvestmentSummary({
     assetClasses: investmentConfig.assetClasses,
     targets: targetsFor(investmentConfig.targets, year),
     items: investmentConfig.items,
     transactions,
+    yields,
     investBudget,
+    capitalBase,
     window: view === "yearly" ? range : undefined,
   });
 
   // Budget state of the CURRENT budget year — powers the transaction form's
-  // remaining-budget warning and the net-worth headline (undeployed budget).
+  // remaining-budget warning and the yearly net-worth headline.
   let budgetSummary = summary;
   if (view === "alltime" || year !== currentYear) {
     const currentIncomes = await getIncomes({ start: currentRange.start, end: currentRange.end });
@@ -87,6 +105,7 @@ export default async function InvestmentsPage({
       targets: targetsFor(investmentConfig.targets, currentYear),
       items: investmentConfig.items,
       transactions,
+      yields,
       investBudget: investBudgetOf(currentIncomes, currentAllocations, config.budgetTypes),
       window: currentRange,
     });
@@ -95,15 +114,24 @@ export default async function InvestmentsPage({
     budgetSummary.classes.map((c) => [c.asset_class_id, c.remaining])
   );
 
-  // Per-item holdings + windowed realized for the drill-down.
+  const inWindow = (date: string) =>
+    view === "alltime" || (date >= range.start && date <= range.end);
+
+  // Per-item holdings + windowed realized (trading + yields) for the drill-down.
   const { positions, realizedEvents } = computeItemPositions(transactions);
   const windowedByItem = new Map<string, { realized: number; basisSold: number }>();
   for (const event of realizedEvents) {
-    if (view === "yearly" && (event.date < range.start || event.date > range.end)) continue;
+    if (!inWindow(event.date)) continue;
     const acc = windowedByItem.get(event.item_id) ?? { realized: 0, basisSold: 0 };
     acc.realized += event.realized;
     acc.basisSold += event.basisSold;
     windowedByItem.set(event.item_id, acc);
+  }
+  // Yields fold into the item's realized amount, never its trading basis.
+  const yieldByItem = new Map<string, number>();
+  for (const y of yields) {
+    if (!inWindow(y.date)) continue;
+    yieldByItem.set(y.item_id, (yieldByItem.get(y.item_id) ?? 0) + y.amount);
   }
 
   const txsByItem = new Map<string, typeof transactions>();
@@ -119,15 +147,20 @@ export default async function InvestmentsPage({
     .map((assetClass) => ({
       assetClass,
       items: investmentConfig.items
-        .filter((item) => item.asset_class_id === assetClass.id && txsByItem.has(item.id))
+        .filter(
+          (item) =>
+            item.asset_class_id === assetClass.id &&
+            (txsByItem.has(item.id) || yieldByItem.has(item.id))
+        )
         .map((item) => {
           const pos = positions.get(item.id);
           const windowed = windowedByItem.get(item.id);
+          const itemYield = yieldByItem.get(item.id) ?? 0;
           return {
             item,
             units: pos?.units ?? null,
             costBasis: pos?.costBasis ?? 0,
-            realized: windowed?.realized ?? 0,
+            realized: (windowed?.realized ?? 0) + itemYield,
             realizedPct:
               windowed && windowed.basisSold > 0 ? windowed.realized / windowed.basisSold : null,
             transactions: [...(txsByItem.get(item.id) ?? [])].reverse(), // newest first
@@ -137,9 +170,42 @@ export default async function InvestmentsPage({
     }))
     .filter((group) => group.items.length > 0);
 
+  // Flat ledger of everything in the window — buys/sells + yields.
+  const itemById = new Map(investmentConfig.items.map((i) => [i.id, i]));
+  const classById = new Map(investmentConfig.assetClasses.map((c) => [c.id, c.name]));
+  const nameOf = (itemId: string) => itemById.get(itemId)?.name ?? "?";
+  const classOf = (itemId: string) => {
+    const item = itemById.get(itemId);
+    return item ? (classById.get(item.asset_class_id) ?? "") : "";
+  };
+  const tradeLogRows: TradeLogRow[] = [
+    ...transactions.filter((tx) => inWindow(tx.date)).map((tx) => ({
+      id: tx.id,
+      date: tx.date,
+      itemName: nameOf(tx.item_id),
+      className: classOf(tx.item_id),
+      kind: tx.side,
+      amount: tx.amount,
+      quantity: tx.quantity,
+    })),
+    ...yields
+      .filter((y) => inWindow(y.date))
+      .map((y, i) => ({
+        id: `yield-${i}`,
+        date: y.date,
+        itemName: nameOf(y.item_id),
+        className: classOf(y.item_id),
+        kind: "yield" as const,
+        amount: y.amount,
+        quantity: null,
+      })),
+  ];
+
   const dataWarnings = [...positions.values()].flatMap((p) => p.warnings);
   const showBudget = view === "yearly";
   const realized = summary.totals.realized;
+  const netWorth = showBudget ? budgetSummary.totals.netWorth : summary.totals.netWorth;
+  const undeployed = Math.max(summary.totals.budget - summary.totals.deployed, 0);
 
   return (
     <div className="space-y-[18px] pb-4">
@@ -152,8 +218,15 @@ export default async function InvestmentsPage({
               : "Everything ever recorded"}
           </p>
         </div>
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
           <InvestmentsPeriodPicker view={view} year={year} />
+          <YieldDialog
+            assetClasses={investmentConfig.assetClasses}
+            items={investmentConfig.items}
+            incomeTypes={config.incomeTypes}
+            budgetTypes={config.budgetTypes}
+            latestSplitByType={latestSplitByType}
+          />
           <TransactionDialog
             assetClasses={investmentConfig.assetClasses}
             items={investmentConfig.items}
@@ -177,9 +250,11 @@ export default async function InvestmentsPage({
         <div className="rounded-[16px] bg-primary px-[18px] py-4 text-primary-foreground md:px-[22px] md:py-5">
           <div className="text-[12px] font-medium text-on-ink">Net worth</div>
           <div className="mt-1.5 text-[19px] font-bold tracking-[-0.01em] tabular-nums md:text-[24px]">
-            {formatIDR(budgetSummary.totals.netWorth)}
+            {formatIDR(netWorth)}
           </div>
-          <div className="mt-1 text-[11px] text-on-ink">holdings + undeployed budget</div>
+          <div className="mt-1 text-[11px] text-on-ink">
+            {showBudget ? "holdings + undeployed budget" : "holdings + undeployed capital"}
+          </div>
         </div>
         <Stat label="Holdings at cost" value={formatIDR(summary.totals.holdingsCost)} />
         <Stat
@@ -194,8 +269,9 @@ export default async function InvestmentsPage({
           />
         ) : (
           <Stat
-            label={`Budget left · ${currentYear}`}
-            value={formatIDR(Math.max(budgetSummary.totals.budget - budgetSummary.totals.deployed, 0))}
+            label="Undeployed capital"
+            value={formatIDR(undeployed)}
+            caption={`of ${formatIDR(summary.totals.budget)} total budget, all years`}
           />
         )}
       </div>
@@ -238,6 +314,19 @@ export default async function InvestmentsPage({
           )}
         </div>
       </div>
+
+      {/* Trade log */}
+      <div>
+        <div className="flex items-baseline justify-between">
+          <span className="text-[16px] font-bold">Trade log</span>
+          <span className="text-[12.5px] text-muted-foreground">
+            {tradeLogRows.length} {tradeLogRows.length === 1 ? "entry" : "entries"}
+          </span>
+        </div>
+        <div className="mt-3.5">
+          <TradeLog rows={tradeLogRows} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -245,10 +334,12 @@ export default async function InvestmentsPage({
 function Stat({
   label,
   value,
+  caption,
   tone,
 }: {
   label: string;
   value: string;
+  caption?: string;
   tone?: "profit" | "loss";
 }) {
   return (
@@ -266,6 +357,7 @@ function Stat({
       >
         {value}
       </div>
+      {caption && <div className="mt-1 text-[11px] text-muted-foreground">{caption}</div>}
     </div>
   );
 }

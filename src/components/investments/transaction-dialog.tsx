@@ -30,7 +30,7 @@ export function TransactionDialog({ assetClasses, items, remainingByClass }: Tra
         Transaction
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-[440px]">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-[560px]">
           <DialogHeader>
             <DialogTitle>Record transaction</DialogTitle>
             <DialogDescription>

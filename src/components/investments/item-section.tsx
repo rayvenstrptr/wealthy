@@ -42,12 +42,12 @@ interface ItemSectionProps {
 
 function RealizedLabel({ realized, pct }: { realized: number; pct: number | null }) {
   if (realized === 0 && pct == null) {
-    return <span className="text-[12px] text-muted-foreground">—</span>;
+    return <span className="text-right text-[12px] text-muted-foreground">—</span>;
   }
   const loss = realized < 0;
   return (
     <span
-      className="text-[12.5px] font-semibold tabular-nums"
+      className="text-right text-[12.5px] font-semibold tabular-nums"
       style={{ color: loss ? "oklch(0.52 0.16 25)" : "oklch(0.5 0.12 155)" }}
     >
       {loss ? "−" : "+"}
@@ -71,12 +71,32 @@ export function ItemSection({ groups, assetClasses, allItems, remainingByClass }
     <div className="space-y-4">
       {groups.map(({ assetClass, items }) => {
         const hue = assetClassHue(assetClass.name);
+        // Display subtotals of the already-computed per-item numbers.
+        const heldTotal = items.reduce((sum, v) => sum + v.costBasis, 0);
+        const realizedTotal = items.reduce((sum, v) => sum + v.realized, 0);
         return (
           <div key={assetClass.id}>
-            <div className="flex items-center gap-2">
-              <span className="size-2 rounded-full" style={{ background: hue.fill }} aria-hidden />
-              <span className="text-[12px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-                {assetClass.name}
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="flex items-center gap-2">
+                <span className="size-2 rounded-full" style={{ background: hue.fill }} aria-hidden />
+                <span className="text-[12px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+                  {assetClass.name}
+                </span>
+              </span>
+              <span className="text-[11.5px] text-muted-foreground tabular-nums">
+                {heldTotal > 0 && `${formatIDR(heldTotal)} held`}
+                {heldTotal > 0 && realizedTotal !== 0 && " · "}
+                {realizedTotal !== 0 && (
+                  <span
+                    className="font-semibold"
+                    style={{
+                      color: realizedTotal < 0 ? "oklch(0.52 0.16 25)" : "oklch(0.5 0.12 155)",
+                    }}
+                  >
+                    {realizedTotal < 0 ? "−" : "+"}
+                    {formatIDR(Math.abs(realizedTotal))}
+                  </span>
+                )}
               </span>
             </div>
 
@@ -93,7 +113,7 @@ export function ItemSection({ groups, assetClasses, allItems, remainingByClass }
                     <button
                       type="button"
                       onClick={() => setOpenItem(expanded ? null : view.item.id)}
-                      className="grid w-full grid-cols-[1fr_auto_auto_20px] items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-row-hover"
+                      className="grid w-full grid-cols-[minmax(0,1fr)_auto_auto_20px] items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-row-hover sm:grid-cols-[minmax(0,1fr)_minmax(110px,auto)_minmax(150px,auto)_20px]"
                     >
                       <span className="min-w-0">
                         <span className="block truncate text-[13.5px] font-medium">
@@ -104,12 +124,16 @@ export function ItemSection({ groups, assetClasses, allItems, remainingByClass }
                         </span>
                         {view.units != null && view.units > 0 && (
                           <span className="text-[11.5px] text-muted-foreground tabular-nums">
-                            {view.units} units
+                            {view.units} units held
                           </span>
                         )}
                       </span>
                       <span className="text-right text-[13px] font-semibold tabular-nums">
-                        {view.costBasis > 0 ? formatIDR(view.costBasis) : ""}
+                        {view.costBasis > 0 ? (
+                          formatIDR(view.costBasis)
+                        ) : (
+                          <span className="font-normal text-muted-foreground">—</span>
+                        )}
                       </span>
                       <RealizedLabel realized={view.realized} pct={view.realizedPct} />
                       <ChevronDown
@@ -177,7 +201,7 @@ export function ItemSection({ groups, assetClasses, allItems, remainingByClass }
       })}
 
       <Dialog open={editingTx !== null} onOpenChange={(open) => !open && setEditingTx(null)}>
-        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-[440px]">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-[560px]">
           <DialogHeader>
             <DialogTitle>Edit transaction</DialogTitle>
           </DialogHeader>

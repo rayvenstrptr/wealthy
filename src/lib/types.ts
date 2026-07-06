@@ -50,6 +50,8 @@ export interface IncomeRow {
   date: string;
   income_type_id: string;
   notes: string | null;
+  /** Set when this income is a yield/dividend from an investment item (v2.2). */
+  investment_item_id?: string | null;
 }
 
 export interface ExpenseRow {

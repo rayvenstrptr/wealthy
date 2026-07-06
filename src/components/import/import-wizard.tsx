@@ -33,6 +33,7 @@ export function ImportWizard() {
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [result, setResult] = useState<ImportResult | null>(null);
+  const [dragging, setDragging] = useState(false);
   const [parsing, startParsing] = useTransition();
   const [importing, startImporting] = useTransition();
 
@@ -110,12 +111,29 @@ export function ImportWizard() {
     );
   }
 
-  // ---- Step 1: pick a file ----
+  // ---- Step 1: pick or drop a file ----
   if (!preview) {
     return (
       <label
+        onDragOver={(e) => {
+          e.preventDefault(); // required, or the browser opens the file instead
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          const file = e.dataTransfer.files?.[0];
+          if (!file) return;
+          if (!file.name.toLowerCase().endsWith(".xlsx")) {
+            toast.error("Drop an .xlsx file — other formats aren't supported.");
+            return;
+          }
+          handleFile(file);
+        }}
         className={cn(
           "flex cursor-pointer flex-col items-center gap-2 rounded-[16px] border border-dashed border-input bg-card px-6 py-10 text-center transition-colors hover:border-foreground/30",
+          dragging && "border-foreground/50 bg-secondary/50",
           parsing && "pointer-events-none opacity-70"
         )}
       >
@@ -125,7 +143,11 @@ export function ImportWizard() {
           <FileUp className="size-6 text-muted-foreground" />
         )}
         <div className="text-[13.5px] font-semibold">
-          {parsing ? `Reading ${fileName}…` : "Choose an .xlsx file"}
+          {parsing
+            ? `Reading ${fileName}…`
+            : dragging
+              ? "Drop it here"
+              : "Choose or drop an .xlsx file"}
         </div>
         <div className="text-[12.5px] text-muted-foreground">
           Nothing is saved until you review and confirm.

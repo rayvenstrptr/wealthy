@@ -51,6 +51,18 @@ export interface RealizedEvent {
   basisSold: number;
 }
 
+/**
+ * A yield/dividend income attributed to an item (incomes.investment_item_id).
+ * Folds into realized totals as a zero-basis gain: it never touches units,
+ * cost basis, basisSold, or the trading realized % — the money side flows
+ * through the income module (envelope split) like any other income.
+ */
+export interface YieldEvent {
+  item_id: string;
+  amount: number;
+  date: string;
+}
+
 function chronological(a: InvestmentTxInput, b: InvestmentTxInput): number {
   if (a.date !== b.date) return a.date < b.date ? -1 : 1;
   const ca = a.created_at ?? "";
@@ -207,7 +219,7 @@ export interface ClassSummaryRow {
   remaining: number;
   /** Current holdings at cost (always all-time state). */
   holdingsCost: number;
-  /** Realized P&L within the window. */
+  /** Realized P&L within the window (trading realized + yields). */
   realized: number;
 }
 
@@ -228,16 +240,26 @@ export interface InvestmentSummary {
  * all-time state; realized P&L and deployed are windowed when `window` is
  * given (yearly view). `investBudget` = income allocated to investment-kind
  * envelopes in the selected year.
+ *
+ * `yields` (dividends/coupons attributed to items) fold into the realized
+ * amounts — zero-basis, so trading % math is untouched.
+ *
+ * `capitalBase` (all-time view) = income allocated to investment-kind
+ * envelopes ACROSS ALL YEARS — the accumulated capital. When given, it
+ * overrides totals.budget so netWorth = holdings + undeployed capital.
  */
 export function computeInvestmentSummary(params: {
   assetClasses: { id: string; name: string; is_active: boolean; sort: number }[];
   targets: { asset_class_id: string; percent: number }[];
   items: { id: string; asset_class_id: string }[];
   transactions: InvestmentTxInput[];
+  yields?: YieldEvent[];
   investBudget: number;
+  capitalBase?: number;
   window?: { start: string; end: string };
 }): InvestmentSummary {
-  const { assetClasses, targets, items, transactions, investBudget, window } = params;
+  const { assetClasses, targets, items, transactions, investBudget, capitalBase, window } = params;
+  const yields = params.yields ?? [];
 
   const { positions, realizedEvents } = computeItemPositions(transactions);
   const deployed = computeDeployed(transactions, items, window);
@@ -257,6 +279,13 @@ export function computeInvestmentSummary(params: {
     const classId = classByItem.get(event.item_id);
     if (!classId) continue;
     realizedByClass.set(classId, (realizedByClass.get(classId) ?? 0) + event.realized);
+  }
+  // Yields fold into realized per class (zero basis — trading % untouched).
+  for (const y of yields) {
+    if (!inRange(y.date, window)) continue;
+    const classId = classByItem.get(y.item_id);
+    if (!classId) continue;
+    realizedByClass.set(classId, (realizedByClass.get(classId) ?? 0) + y.amount);
   }
 
   const visible = assetClasses
@@ -287,9 +316,14 @@ export function computeInvestmentSummary(params: {
   for (const event of realizedEvents) {
     if (inRange(event.date, window)) totalRealized += event.realized;
   }
+  for (const y of yields) {
+    if (inRange(y.date, window)) totalRealized += y.amount;
+  }
   let totalDeployed = 0;
   for (const value of deployed.values()) totalDeployed += value;
-  const totalBudget = classes.reduce((sum, c) => sum + c.budget, 0);
+  // capitalBase (all-time) replaces the per-year target-derived budget: the
+  // headline becomes accumulated capital vs everything ever deployed.
+  const totalBudget = capitalBase ?? classes.reduce((sum, c) => sum + c.budget, 0);
 
   return {
     classes,

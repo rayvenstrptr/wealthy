@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import * as mock from "@/lib/mock/api";
 import { isMockMode } from "@/lib/mock/mode";
 import type { SplitCell } from "@/lib/allocation-split";
+import type { YieldEvent } from "@/lib/investments";
 import type {
   AssetClassTarget,
   Config,
@@ -191,6 +192,23 @@ export async function getInvestmentConfig(): Promise<InvestmentConfig> {
     })),
     items: unwrap(items),
   };
+}
+
+/**
+ * Yield/dividend incomes attributed to investment items (all-time; callers
+ * window by date like realized events). One row per yield income.
+ */
+export async function getInvestmentYields(): Promise<YieldEvent[]> {
+  if (isMockMode()) return mock.getInvestmentYields();
+  const supabase = await createClient();
+  const result = await supabase
+    .from("incomes")
+    .select("investment_item_id,amount,date")
+    .not("investment_item_id", "is", null)
+    .order("date", { ascending: true });
+  return (unwrap(result) as { investment_item_id: string; amount: number; date: string }[]).map(
+    (row) => ({ item_id: row.investment_item_id, amount: row.amount, date: row.date })
+  );
 }
 
 /** ALL transactions, chronological — the investment math folds them in order. */

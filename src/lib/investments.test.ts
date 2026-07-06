@@ -224,6 +224,54 @@ describe("computeInvestmentSummary", () => {
     expect(fixed.holdingsCost).toBe(8_000_000);
   });
 
+  it("folds yields into realized (class + totals) without touching the trading math", () => {
+    const year = { start: "2025-12-25", end: "2026-12-24" };
+    const summary = computeInvestmentSummary({
+      assetClasses,
+      targets,
+      items,
+      transactions: [
+        tx("bbca", "buy", 10_000_000, 100, "2026-01-10"),
+        tx("bbca", "sell", 5_500_000, 50, "2026-05-10"), // basis 5jt → +500k trading realized
+      ],
+      yields: [
+        { item_id: "bbca", amount: 250_000, date: "2026-06-01" }, // in window
+        { item_id: "depo", amount: 400_000, date: "2026-07-01" }, // in window
+        { item_id: "bbca", amount: 999_000, date: "2025-06-01" }, // last budget year
+      ],
+      investBudget: 40_000_000,
+      window: year,
+    });
+
+    const stocks = summary.classes.find((c) => c.name === "Stocks")!;
+    expect(stocks.realized).toBe(750_000); // 500k trading + 250k yield
+    const fixed = summary.classes.find((c) => c.name === "Fixed")!;
+    expect(fixed.realized).toBe(400_000); // yield only, nothing sold
+    expect(summary.totals.realized).toBe(1_150_000);
+
+    // Trading state is untouched: half the position remains at cost.
+    expect(stocks.holdingsCost).toBe(5_000_000);
+    expect(stocks.deployed).toBe(4_500_000); // 10jt buy − 5.5jt sell proceeds
+  });
+
+  it("capitalBase overrides the budget: net worth = holdings + undeployed capital", () => {
+    const summary = computeInvestmentSummary({
+      assetClasses,
+      targets,
+      items,
+      transactions: [
+        tx("bbca", "buy", 30_000_000, null, "2025-02-01"),
+        tx("depo", "buy", 50_000_000, null, "2026-02-01"),
+      ],
+      investBudget: 40_000_000, // current-year budget — ignored when capitalBase is set
+      capitalBase: 120_000_000, // every Rp ever allocated to Invest envelopes
+    });
+    expect(summary.totals.budget).toBe(120_000_000);
+    expect(summary.totals.deployed).toBe(80_000_000);
+    // 80jt held at cost + (120jt − 80jt) undeployed capital.
+    expect(summary.totals.netWorth).toBe(120_000_000);
+  });
+
   it("archived classes disappear from rows but keep their holdings in totals", () => {
     const summary = computeInvestmentSummary({
       assetClasses: [

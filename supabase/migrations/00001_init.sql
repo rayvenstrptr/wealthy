@@ -138,7 +138,16 @@ create table public.investment_transactions (
   notes text null
 );
 
+-- Yield/dividend incomes (v2.2): an income attributed to an investment item.
+-- Recording a yield in the investments module creates a normal income (with an
+-- envelope split) that carries this link for per-holding attribution. Declared
+-- via alter because investment_items is created after incomes.
+alter table public.incomes
+  add column investment_item_id uuid null references public.investment_items(id) on delete restrict;
+
 create index incomes_user_date_idx on public.incomes (user_id, date);
+create index incomes_user_item_idx on public.incomes (user_id, investment_item_id)
+  where investment_item_id is not null;
 create index income_allocations_user_income_idx on public.income_allocations (user_id, income_id);
 create index expenses_user_date_idx on public.expenses (user_id, date);
 create index expenses_user_event_idx on public.expenses (user_id, event_id);
