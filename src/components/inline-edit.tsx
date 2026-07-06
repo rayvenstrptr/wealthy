@@ -71,19 +71,32 @@ interface InlineAmountProps {
   className?: string;
   /** Show a "Rp " prefix (id-ID money). Parsing strips it, so it round-trips. */
   currency?: boolean;
+  /** Permit a leading "-" (negative expense = surplus that refills the budget). */
+  allowNegative?: boolean;
   "aria-label"?: string;
 }
 
-export function InlineAmount({ value, onSave, className, currency, ...props }: InlineAmountProps) {
+export function InlineAmount({
+  value,
+  onSave,
+  className,
+  currency,
+  allowNegative,
+  ...props
+}: InlineAmountProps) {
   const [draft, setDraft] = useState<number | null>(value);
+  // A lone "-" parses to null; remember it so the sign isn't swallowed mid-typing.
+  const [minusDraft, setMinusDraft] = useState(false);
   const [reverting, setReverting] = useState(false);
 
   async function commit() {
+    setMinusDraft(false);
     if (reverting) {
       setReverting(false);
       return;
     }
-    if (draft == null || draft <= 0 || draft === value) {
+    const invalid = draft == null || draft === 0 || (!allowNegative && draft < 0);
+    if (invalid || draft === value) {
       setDraft(value);
       return;
     }
@@ -91,13 +104,26 @@ export function InlineAmount({ value, onSave, className, currency, ...props }: I
     if (!ok) setDraft(value);
   }
 
-  const display = draft == null ? "" : currency ? `Rp ${formatNumber(draft)}` : formatNumber(draft);
+  function handleChange(raw: string) {
+    const parsed = parseAmountInput(raw, allowNegative);
+    setMinusDraft(Boolean(allowNegative) && parsed == null && raw.replace(/[^\d-]/g, "") === "-");
+    setDraft(parsed);
+  }
+
+  const display =
+    draft != null
+      ? currency
+        ? `Rp ${formatNumber(draft)}`
+        : formatNumber(draft)
+      : minusDraft
+        ? "-"
+        : "";
 
   return (
     <input
-      inputMode="numeric"
+      inputMode={allowNegative ? "text" : "numeric"}
       value={display}
-      onChange={(e) => setDraft(parseAmountInput(e.target.value))}
+      onChange={(e) => handleChange(e.target.value)}
       onBlur={commit}
       onKeyDown={keyHandler(() => {
         setReverting(true);

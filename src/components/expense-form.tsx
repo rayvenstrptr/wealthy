@@ -59,7 +59,7 @@ export function ExpenseForm({ budgetTypes, categories, events, initial, onSaved,
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return toast.error("Name is required.");
-    if (!amount || amount <= 0) return toast.error("Amount must be greater than 0.");
+    if (amount == null || amount === 0) return toast.error("Amount must not be 0.");
     if (!categoryId) return toast.error("Pick an expense category.");
     if (!budgetTypeId) return toast.error("Pick a budget type.");
     if (eventChoice === NEW_EVENT && !newEventName.trim())
@@ -147,7 +147,14 @@ export function ExpenseForm({ budgetTypes, categories, events, initial, onSaved,
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label htmlFor="expense-amount">Amount</Label>
-          <AmountInput id="expense-amount" value={amount} onChange={setAmount} placeholder="0" required />
+          <AmountInput
+            id="expense-amount"
+            value={amount}
+            onChange={setAmount}
+            placeholder="0"
+            allowNegative
+            required
+          />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="expense-date">Date</Label>
@@ -160,6 +167,13 @@ export function ExpenseForm({ budgetTypes, categories, events, initial, onSaved,
           />
         </div>
       </div>
+
+      {amount != null && amount < 0 && (
+        <p className="text-[12.5px] text-amber-600 dark:text-amber-500">
+          Negative expense — this is a surplus (refund, someone paid extra) and will refill the
+          budget.
+        </p>
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">

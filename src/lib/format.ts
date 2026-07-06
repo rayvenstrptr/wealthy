@@ -12,11 +12,17 @@ export function formatIDR(n: number): string {
   return `${sign}Rp ${idNumber.format(Math.abs(rounded))}`;
 }
 
-/** "1.250.000" / "Rp 1,250,000" / "1250000" -> 1250000. Empty -> null. */
-export function parseAmountInput(raw: string): number | null {
+/**
+ * "1.250.000" / "Rp 1,250,000" / "1250000" -> 1250000. Empty -> null.
+ * With `allowNegative`, a leading "-" is kept ("-50.000" -> -50000): a negative
+ * expense is a surplus/refund that refills the budget.
+ */
+export function parseAmountInput(raw: string, allowNegative = false): number | null {
+  const negative = allowNegative && raw.trimStart().startsWith("-");
   const digits = raw.replace(/\D/g, "");
   if (!digits) return null;
-  return Number.parseInt(digits, 10);
+  const value = Number.parseInt(digits, 10);
+  return negative ? -value : value;
 }
 
 /** Fraction 0.155 -> "15,5%" (max 1 decimal, id-ID comma). */

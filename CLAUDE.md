@@ -9,10 +9,13 @@ Timezone: Asia/Jakarta (WIB).
 
 v1 (income + expenses + allocation matrix) and the first front-end pass (Envelope visual identity, shared Add-Expense dialog) are done and committed. **v2 is built and verified** (unit tests + production build + live smoke test): the allocation matrix was REPLACED by per-income envelope splits, and the investments module + `/investments` page were added. Demo data was wiped and reseeded for v2 (delete `.mock/db.json` to reseed anytime).
 
+**v2.1 is built and verified** (unit tests + build + live import of Ray's real Y2025 sheet): (1) username + 4-digit-PIN auth (reused from the Split project) works in mock mode too — landing/login page, signed session cookie, user menu top right (Settings / Import / Log out), no auto-logout; (2) `/import` brings in expenses+income from an xlsx (Cat·Details·Date·Ex·In·Type·Notes) with a preview step — duplicate/similar-near-date warnings, auto-created categories/envelopes/income types, investment rows excluded (they belong in the investments module), formula cells keep the final amount with the calculation appended to notes; (3) expenses may be negative = surplus that refills the budget (warned in the form, green in lists; amount just must not be 0).
+
 Key implementation decisions already made (do not relitigate without reason):
 
 - **supabase-js directly** (no Drizzle) — RLS + auth flow through `@supabase/ssr` clients.
-- **Local mock mode**: when `NEXT_PUBLIC_SUPABASE_URL` is unset, the app runs with no auth and a file-backed store at `.mock/db.json` (seeded like the SQL trigger + demo entries). Ray is running **local-first for now** — don't push Supabase/Vercel setup. A pre-v2 db.json is auto-detected and reseeded.
+- **Local mock mode**: when `NEXT_PUBLIC_SUPABASE_URL` is unset, the app runs with a file-backed store at `.mock/db.json` (seeded like the SQL trigger + demo entries). Ray is running **local-first for now** — don't push Supabase/Vercel setup. A pre-v2 db.json is auto-detected and reseeded.
+- **Auth (v2.1)** is username + 4-digit PIN, Split-project style. Mock mode: scrypt-hashed users in `.mock/users.json` (separate file — reseeding db.json keeps accounts) + HMAC-signed `wd_session` cookie; middleware only checks cookie presence, the (app) layout verifies the signature (bad cookie → `/auth/reset` clears it, avoiding a redirect loop). Supabase mode maps the same credentials onto email auth via `<username>@wealth.local`. Auth is a gate, not multi-tenancy — data stays single-store.
 - **Dev server runs on port 888** (`npm run dev`). The Claude preview tool can't bind ports <1024 — `.claude/launch.json` runs it on 3888 for previews.
 - shadcn/ui here is the **Base UI** flavor (`@base-ui/react`, not Radix): triggers use `render` props not `asChild`; Select takes `items` + `onValueChange`. Follow existing component usage.
 - Income+split and income-migration writes are **two inserts with compensating delete** (supabase-js has no transactions) — acceptable single-user risk; use an RPC if Supabase is ever deployed.
@@ -90,7 +93,8 @@ Seed data: income types Salary(monthly)/Yield/Bonus/Angpao/THR/TCG Yield/Others;
 /investments  Yearly | All time — net worth, class cards, holdings drill-down, buy/sell entry
 /events       Event list + per-event summary at /events/[id]
 /settings     Income types, categories, Investments (classes/targets/items), envelopes, sign out
-/login        Only reachable when Supabase is configured
+/import       xlsx import wizard (also linked from the user menu)
+/login        Landing + sign-in/create-account (username + 4-digit PIN); default page when logged out
 ```
 
 Mobile-first; the bottom tab bar has **6 tabs** (Home/Expenses/Income/Invest/Events/Settings). A single "+ Expense" dialog is owned by `AddExpenseProvider` in `src/app/(app)/layout.tsx` and opened via `useAddExpense()` from both the FAB and the desktop nav; it stays open after save for rapid entry.
@@ -100,7 +104,9 @@ Mobile-first; the bottom tab bar has **6 tabs** (Home/Expenses/Income/Invest/Eve
 - All summary math lives in `src/lib/summary.ts`; investment math in `src/lib/investments.ts`; split-editor math in `src/lib/allocation-split.ts`; cycle/date logic in `src/lib/dates.ts` — all pure and unit-tested (`npm test`). **Never compute budget/investment numbers in components.**
 - Server components read via `src/lib/data.ts`; writes via server actions in `src/lib/actions/*` returning `{ ok } | { ok: false, error }`. **Every read/write path has a mock-mode branch** (`src/lib/mock/api.ts`, store in `src/lib/mock/store.ts`) — keep both in sync when changing the data layer, including the seed.
 - Money formatting via `formatIDR`/`formatNumber` in `src/lib/format.ts` (id-ID separators).
-- Philosophy: **warn, don't block** (target sums, over-budget buys) — the two exceptions are the income split sum (hard) and oversells (hard).
+- **Negative expenses are legal** (surplus/refund refills the budget; only 0 is invalid). `parseAmountInput`/`AmountInput`/`InlineAmount` take an `allowNegative` flag — expenses pass it, incomes/investments don't.
+- Import: pure row classification + duplicate detection in `src/lib/import/core.ts` (unit-tested); xlsx reading (exceljs) + preview/execute server actions in `src/lib/actions/import.ts`; imported incomes reuse the latest split of their type (scaled) or fall back 100% → Cash.
+- Philosophy: **warn, don't block** (target sums, over-budget buys, negative expenses, import duplicates) — the two exceptions are the income split sum (hard) and oversells (hard).
 
 ## Front-end map
 

@@ -12,6 +12,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { useAddExpense } from "@/components/add-expense-provider";
+import { UserMenu } from "@/components/user-menu";
 import { cn } from "@/lib/utils";
 
 // `short` is the mobile tab label — 6 tabs need tighter copy.
@@ -38,7 +39,7 @@ function Wordmark() {
   );
 }
 
-export function Nav() {
+export function Nav({ username }: { username: string }) {
   const pathname = usePathname();
   const { open } = useAddExpense();
 
@@ -67,14 +68,25 @@ export function Nav() {
               );
             })}
           </nav>
-          <button
-            type="button"
-            onClick={open}
-            className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-primary px-4.5 py-2 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-[#3a362e] dark:hover:bg-[#e8e3d9]"
-          >
-            <Plus className="size-4" />
-            Expense
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={open}
+              className="inline-flex items-center gap-1.5 rounded-full bg-primary px-4.5 py-2 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-[#3a362e] dark:hover:bg-[#e8e3d9]"
+            >
+              <Plus className="size-4" />
+              Expense
+            </button>
+            <UserMenu username={username} />
+          </div>
+        </div>
+      </header>
+
+      {/* Mobile top bar — wordmark + user menu */}
+      <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur md:hidden">
+        <div className="flex h-12 items-center justify-between px-4">
+          <Wordmark />
+          <UserMenu username={username} />
         </div>
       </header>
 

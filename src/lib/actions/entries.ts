@@ -27,7 +27,8 @@ interface ExpenseInput {
 
 function validateExpense(input: ExpenseInput): string | null {
   if (!input.name.trim()) return "Name is required.";
-  if (!Number.isFinite(input.amount) || input.amount <= 0) return "Amount must be greater than 0.";
+  // Negative expenses are allowed: a surplus (refund, overpayment back) refills the budget.
+  if (!Number.isFinite(input.amount) || input.amount === 0) return "Amount must not be 0.";
   if (!input.date) return "Date is required.";
   if (!input.budget_type_id) return "Budget type is required.";
   if (!input.expense_category_id) return "Category is required.";

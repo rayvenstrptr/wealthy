@@ -7,6 +7,7 @@ import { updateExpense } from "@/lib/actions/entries";
 import { formatDate } from "@/lib/dates";
 import { envelopeHue } from "@/lib/envelope-colors";
 import type { BudgetType, EventRow, ExpenseCategory, ExpenseRow } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { ExpenseForm } from "@/components/expense-form";
 import { InlineAmount, InlineName } from "@/components/inline-edit";
 import { Button } from "@/components/ui/button";
@@ -75,7 +76,11 @@ export function ExpenseList({
       toast.error(result.error);
       return false;
     }
-    toast.success("Updated");
+    if (patch.amount != null && patch.amount < 0) {
+      toast.warning("Negative expense — this surplus refills the budget.");
+    } else {
+      toast.success("Updated");
+    }
     return true;
   }
 
@@ -151,7 +156,11 @@ export function ExpenseList({
                 value={expense.amount}
                 onSave={(amount) => savePatch(expense, { amount })}
                 currency
-                className="w-32 shrink-0 md:w-full md:text-right"
+                allowNegative
+                className={cn(
+                  "w-32 shrink-0 md:w-full md:text-right",
+                  expense.amount < 0 && "text-emerald-600 dark:text-emerald-500"
+                )}
                 aria-label={`Amount of ${expense.name}`}
               />
               <Button

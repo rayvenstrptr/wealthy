@@ -398,6 +398,57 @@ export function deleteEvent(id: string): ActionResult {
   return { ok: true };
 }
 
+// ---------- Bulk import ----------
+
+export interface ImportExpenseInput {
+  name: string;
+  amount: number;
+  date: string;
+  budget_type_id: string;
+  expense_category_id: string;
+  notes: string | null;
+}
+
+export interface ImportIncomeInput {
+  name: string;
+  amount: number;
+  date: string;
+  income_type_id: string;
+  notes: string | null;
+  allocations: SplitCell[];
+}
+
+/** Insert a whole xlsx import in one load/save (one write per file, not per row). */
+export function importEntries(
+  expenses: ImportExpenseInput[],
+  incomes: ImportIncomeInput[]
+): ActionResult {
+  const db = loadDb();
+  // Monotonic created_at so same-date rows keep their sheet order.
+  let tick = Date.now();
+  const next = () => new Date(tick++).toISOString();
+  for (const expense of expenses) {
+    db.expenses.push({ id: newId(), ...expense, event_id: null, created_at: next() });
+  }
+  for (const income of incomes) {
+    const { allocations, ...row } = income;
+    const id = newId();
+    db.incomes.push({ id, ...row, created_at: next() });
+    for (const cell of allocations) {
+      if (cell.amount <= 0) continue;
+      db.incomeAllocations.push({
+        id: newId(),
+        income_id: id,
+        budget_type_id: cell.budget_type_id,
+        amount: cell.amount,
+        created_at: next(),
+      });
+    }
+  }
+  saveDb(db);
+  return { ok: true };
+}
+
 // ---------- Investment transaction writes ----------
 
 interface TransactionInput {
