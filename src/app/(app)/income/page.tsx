@@ -1,5 +1,5 @@
 import type { SplitCell } from "@/lib/allocation-split";
-import { currentMonthWIB } from "@/lib/dates";
+import { currentYearWIB } from "@/lib/dates";
 import { normalizePeriod, periodLabel, periodRange } from "@/lib/period";
 import {
   getConfig,
@@ -22,7 +22,7 @@ export default async function IncomePage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
-  const defaultMonth = currentMonthWIB();
+  const defaultMonth = currentYearWIB();
   const month = normalizePeriod(params.month, defaultMonth);
   const type = params.type ?? "all";
   const q = params.q ?? "";
