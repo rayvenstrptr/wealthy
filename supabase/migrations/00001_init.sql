@@ -83,7 +83,8 @@ create table public.expenses (
   user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
   created_at timestamptz not null default now(),
   name text not null,
-  amount bigint not null check (amount > 0),
+  -- Negative expenses are legal (surplus/refund refills the budget); only 0 is invalid.
+  amount bigint not null check (amount <> 0),
   date date not null,
   budget_type_id uuid not null references public.budget_types(id) on delete restrict,
   expense_category_id uuid not null references public.expense_categories(id) on delete restrict,
