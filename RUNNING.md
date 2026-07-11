@@ -1,6 +1,9 @@
 # Running the dashboard locally
 
-Everything below assumes a terminal. No Supabase account, no internet, no Claude needed.
+Everything below assumes a terminal. Since 2026-07-11 the app lives in the cloud
+(<https://wealthy-ten.vercel.app>) and the local server talks to the **same** database,
+so internet is required. You usually don't need to run locally at all anymore — just
+open the website. Run locally when developing or when Vercel is down.
 
 ## Step by step
 
@@ -32,7 +35,9 @@ Wait for it to print `✓ Ready in 4.3s` or similar.
 
 Note the port: **888**, not 3000. It is set in `package.json` under `scripts.dev`.
 
-**6. Log in.** Username + 4-digit PIN. Existing accounts: `ray`, `rays`, `test1`.
+**6. Log in.** Username + 4-digit PIN. The cloud account is `rays` — same login as the
+website. (The old mock-only accounts `ray` and `test1` only exist if you switch back to
+mock mode.)
 
 **7. Stop the server** when done: click the terminal window and press `Ctrl+C`.
 
@@ -48,26 +53,21 @@ The app checks whether the environment variable `NEXT_PUBLIC_SUPABASE_URL` is se
   in `.mock/users.json`. Nothing leaves the machine.
 - **Set → Supabase mode.** Talks to a real cloud Postgres database.
 
-There is no `.env.local` file here, so you are in **mock mode**. That is why `npm run dev` needs no
-configuration at all.
+There **is** a `.env.local` file here (since 2026-07-11), so local runs in **Supabase mode**:
+everything you see and edit locally is the live cloud data — the same thing the website shows.
+If the Supabase keys ever change, refresh the file with `vercel env pull .env.local`.
+To deliberately go offline, rename `.env.local` away and you're back in mock mode.
 
 ---
 
-## ⚠️ Do not delete `.mock/db.json`
+## About `.mock/db.json` (old local data)
 
-`README.md` and `CLAUDE.md` both say "delete `.mock/db.json` to reset to seed data." That advice is
-now **dangerous**. That file holds the real Y2025 data imported from the xlsx sheet. Deleting it
-replaces everything with fake demo entries.
+The real Y2025 data was migrated into Supabase on 2026-07-11 — the cloud is now the source of
+truth, and `.mock/db.json` is a frozen snapshot from just before the migration (a Desktop backup
+`db-backup-2026-07-11-pre-cloud.json` also exists). Deleting it no longer loses live data, but
+keep it as a last-resort archive. It only gets read in mock mode.
 
-Back it up regularly:
-
-```bash
-cp .mock/db.json ~/Desktop/db-backup-$(date +%Y-%m-%d).json
-```
-
-`.mock/users.json` is a separate file on purpose, so a data reset would not destroy the logins.
-Both are gitignored — they are **not** in git, so git will not save you here. The Desktop copy is
-the only safety net.
+`.mock/users.json` still holds the mock-mode logins. Both files are gitignored.
 
 ---
 

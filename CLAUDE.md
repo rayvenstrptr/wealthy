@@ -18,19 +18,27 @@ v1 (income + expenses + allocation matrix) and the first front-end pass (Envelop
 Key implementation decisions already made (do not relitigate without reason):
 
 - **supabase-js directly** (no Drizzle) — RLS + auth flow through `@supabase/ssr` clients.
-- **Local mock mode**: when `NEXT_PUBLIC_SUPABASE_URL` is unset, the app runs with a file-backed store at `.mock/db.json` (seeded like the SQL trigger + demo entries). Ray is running **local-first for now** — don't push Supabase/Vercel setup. A pre-v2 db.json is auto-detected and reseeded.
+- **Local mock mode is now a fallback, not the default** (since 2026-07-11): when `NEXT_PUBLIC_SUPABASE_URL` is unset, the app runs with a file-backed store at `.mock/db.json`. The app is **deployed** (see Deployment) and local dev talks to the same cloud database via `.env.local` — mock mode only activates if `.env.local` is removed. `.mock/db.json` is an archived pre-migration snapshot (Desktop backup exists), no longer the source of truth. Keep mock-mode code paths working — they're the offline fallback and the test bed.
 - **Auth (v2.1)** is username + 4-digit PIN, Split-project style. Mock mode: scrypt-hashed users in `.mock/users.json` (separate file — reseeding db.json keeps accounts) + HMAC-signed `wd_session` cookie; middleware only checks cookie presence, the (app) layout verifies the signature (bad cookie → `/auth/reset` clears it, avoiding a redirect loop). Supabase mode maps the same credentials onto email auth via `<username>@wealth.local`. Auth is a gate, not multi-tenancy — data stays single-store.
 - **Dev server runs on port 888** (`npm run dev`). The Claude preview tool can't bind ports <1024 — `.claude/launch.json` runs it on 3888 for previews.
 - shadcn/ui here is the **Base UI** flavor (`@base-ui/react`, not Radix): triggers use `render` props not `asChild`; Select takes `items` + `onValueChange`. Follow existing component usage.
-- Income+split and income-migration writes are **two inserts with compensating delete** (supabase-js has no transactions) — acceptable single-user risk; use an RPC if Supabase is ever deployed.
+- Income+split and income-migration writes are **two inserts with compensating delete** (supabase-js has no transactions) — acceptable single-user risk. Supabase is now deployed, so moving these writes into a Postgres RPC is an open TODO.
 
 ## Stack
 
 - Next.js 15 (App Router, TypeScript, Turbopack)
-- Supabase (Postgres + Auth) — deployed on Vercel eventually, so no SQLite
+- Supabase (Postgres + Auth) — live, project ref `bbiajfycdnkjikjbkmhu`
 - Tailwind CSS v4 + shadcn/ui (Base UI primitives)
 - supabase-js via `@supabase/ssr`; single user: one Supabase account, RLS on `user_id` on every table
 - Vitest for the pure-math unit tests (`npm test`)
+
+## Deployment (LIVE since 2026-07-11)
+
+- **Production:** <https://wealthy-ten.vercel.app> — Vercel project `wealthy` (Hobby), GitHub `rayvenstrptr/wealthy`. **Deploys trigger on push to `main`.** The CLI path (`vercel --prod`) gets BLOCKED on this account — don't use it.
+- **Commit-author gotcha:** Vercel blocks any deployment (`COMMIT_AUTHOR_REQUIRED`) whose commit author/committer email doesn't map to Ray's GitHub user. Commit with the GitHub noreply address: `git -c user.name="Rayven Satriaputra" -c user.email="62012037+rayvenstrptr@users.noreply.github.com" commit …` (Ray's usual git email `rayvensatriaputra@yahoo.co.id` is unverified on Vercel).
+- **Supabase:** schema is `supabase/migrations/00001_init.sql`, applied 2026-07-11 (note: the expenses CHECK is `amount <> 0` — negative surplus rows are legal). Email auth provider is ENABLED with autoconfirm ON — both are required by the `<username>@wealth.local` synthetic-email login; never disable them. Schema changes can be applied via the Management API `POST /v1/projects/{ref}/database/query` (direct DB connections need IPv6/paid IPv4 — not available here).
+- **Env:** `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` are set on Vercel for production/preview/development. Local dev reads the same values from `.env.local` (refresh with `vercel env pull .env.local`).
+- **Data:** Ray's real data was migrated 2026-07-11 from `.mock/db.json` into Supabase with UUIDs preserved. Single account: username `rays`. **The cloud database is the single source of truth** — local dev writes to it directly.
 
 ## Core Concepts
 
